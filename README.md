@@ -5,6 +5,7 @@ This project is under active initial development and therefor not available for 
 
 ### Development and testing methodology
 End to end test:
+
 `Pillow metadata -> GStreamer -> H.264 + AAC -> MPEG-TS -> UDP -> TVHeadend -> Plex LiveTV`
 
 Basic acceptance criteria - Regression test checklist:
