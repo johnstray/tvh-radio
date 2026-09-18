@@ -1,5 +1,8 @@
+import json
+import sys
 import threading
 from io import BytesIO
+from pathlib import Path
 
 import gi
 import requests
@@ -15,10 +18,6 @@ from gi.repository import GLib, Gst, GstApp
 # CONFIGURATION
 # ------------------------------------------------------------------------------
 
-STATION_NAME = "Woolworths Radio"
-STATION_LOGO = "https://i.iheart.com/v3/re/new_assets/617f2881bd5039e366ef0289?ops=fit(240%2C240)"
-TRACK_META_URL = "https://au.api.iheart.com/api/v3/live-meta/stream/9195/currentTrackMeta"
-
 UPDATE_INTERVAL = 5
 IMAGE_DEFINITION = 720
 REQUEST_TIMEOUT = 10  # seconds
@@ -31,6 +30,33 @@ AUDIO_BITRATE = 128000
 ICECAST_URL = "http://arn-instore.streamguys1.com/wwr_007"
 UDP_HOST = "127.0.0.1"
 UDP_PORT = 1234
+
+def load_config(config_file):
+    try:
+        with open(config_file, "r", encoding="utf-8") as file:
+            config = json.load(file)
+    except FileNotFoundError:
+        raise RuntimeError(f"Configuration file not found: {config_file}")
+    except json.JSONDecodeError as error:
+        raise RuntimeError(f"Invalid JSON in configuration file: {error}")
+
+    required_keys = [
+        "channel_name",
+        "station_name",
+        "station_logo",
+        "track_meta_url",
+        "icecast_url",
+        "udp_host",
+        "udp_port",
+    ]
+
+    for key in required_keys:
+        if key not in config:
+            raise RuntimeError(
+                f"Missing required configuration value: {key}"
+            )
+
+    return config
 
 # Base definitions for image dimensions based on a 16:9 aspect ratio.
 BASE_DEFINITION = 720
@@ -404,12 +430,35 @@ def on_message(bus, message):
 
 def main():
     global main_loop
+    global STATION_NAME
+    global STATION_LOGO
+    global TRACK_META_URL
+    global ICECAST_URL
+    global UDP_HOST
+    global UDP_PORT
+
+    if len(sys.argv) != 2:
+        print("Usage: python3 streamer.py <config-file>")
+        sys.exit(1)
+
+    config_file = Path(sys.argv[1])
+    config = load_config(config_file)
+
+    STATION_NAME = config["station_name"]
+    STATION_LOGO = config["station_logo"]
+    TRACK_META_URL = config["track_meta_url"]
+    ICECAST_URL = config["icecast_url"]
+    UDP_HOST = config["udp_host"]
+    UDP_PORT = config["udp_port"]
 
     print("Starting video/audio streamer")
-    print(f"Resolution:  {VIDEO_WIDTH}x{VIDEO_HEIGHT}")
-    print(f"Frame rate:  {VIDEO_FPS} fps")
-    print(f"Icecast:     {ICECAST_URL}")
-    print(f"UDP Output:  {UDP_HOST}:{UDP_PORT}")
+    print(f"Configuration: {config_file}")
+    print(f"Channel:       {config['channel_name']}")
+    print(f"Station:       {STATION_NAME}")
+    print(f"Resolution:    {VIDEO_WIDTH}x{VIDEO_HEIGHT}")
+    print(f"Frame rate:    {VIDEO_FPS} fps")
+    print(f"Icecast:       {ICECAST_URL}")
+    print(f"UDP Output:    {UDP_HOST}:{UDP_PORT}")
 
     stop_event = threading.Event()
     image_worker = threading.Thread(
@@ -454,4 +503,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except RuntimeError as error:
+        print(f"Runtime error: {error}")
+        sys.exit(1)
