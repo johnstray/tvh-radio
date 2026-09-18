@@ -48,12 +48,26 @@ def load_config(config_file):
         "icecast_url",
         "udp_host",
         "udp_port",
+        "fallback_metadata"
     ]
 
     for key in required_keys:
         if key not in config:
             raise RuntimeError(
                 f"Missing required configuration value: {key}"
+            )
+
+    fallback_keys = [
+        "title",
+        "artist",
+        "album",
+        "image_path",
+    ]
+
+    for key in fallback_keys:
+        if key not in config["fallback_metadata"]:
+            raise RuntimeError(
+                f"Missing required fallback metadata value: {key}"
             )
 
     return config
@@ -98,6 +112,7 @@ main_loop = None
 current_image = None
 image_lock = threading.Lock()
 station_logo = None
+fallback_metadata = None
 
 
 # ------------------------------------------------------------------------------
@@ -127,10 +142,10 @@ def get_station_logo():
 def get_track_metadata():
     """Return current track metadata, or the existing station fallback."""
     default_data = {
-        "title": STATION_NAME,
-        "artist": "Clear Channel Australia",
-        "album": "iHeartRadio",
-        "imagePath": STATION_LOGO,
+        "title": fallback_metadata["title"],
+        "artist": fallback_metadata["artist"],
+        "album": fallback_metadata["album"],
+        "imagePath": fallback_metadata["image_path"],
     }
 
     try:
@@ -450,6 +465,7 @@ def main():
     global ICECAST_URL
     global UDP_HOST
     global UDP_PORT
+    global fallback_metadata
 
     if len(sys.argv) != 2:
         print("Usage: python3 streamer.py <config-file>")
@@ -465,6 +481,7 @@ def main():
     ICECAST_URL = config["icecast_url"]
     UDP_HOST = config["udp_host"]
     UDP_PORT = config["udp_port"]
+    fallback_metadata = config["fallback_metadata"]
 
     print("Starting video/audio streamer")
     print(f"Configuration: {config_file}")
