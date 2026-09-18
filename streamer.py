@@ -160,9 +160,11 @@ def get_album_artwork(image_url):
 
     return None
 
+def get_track_identity(data):
+    """Return a unique identifier for the track based on its metadata."""
+    return f"{data.get('title', '')}-{data.get('artist', '')}-{data.get('album', '')}-{data.get('imagePath', '')}"
 
-def generate_image():
-    data = get_track_metadata()
+def generate_image(data):
     img_width = IMAGE_DEFINITION * 16 // 9
     img_height = IMAGE_DEFINITION
 
@@ -228,10 +230,9 @@ def encode_image(image):
 
 def run_image_worker(stop_event):
     global current_image
-    """Generate images outside the GLib/GStreamer main loop.
 
-    Event.wait() sleeps without busy-waiting and returns immediately at shutdown.
-    """
+    previous_track = None
+
     print(
         f"Now playing image generator started. - "
         f"Update interval: {UPDATE_INTERVAL} seconds"
@@ -239,13 +240,25 @@ def run_image_worker(stop_event):
 
     while not stop_event.is_set():
         try:
-            image = generate_image()
+            data = get_track_metadata()
+            track_identity = get_track_identity(data)
 
-            jpeg_data = encode_image(image)
-            with image_lock:
-                current_image = jpeg_data
+            if track_identity != previous_track:
+                print("Track metadata changed. Generating new image.")
 
-            print(f"Image generated and stored in memory. Size: {len(jpeg_data)} bytes")
+                image = generate_image(data)
+                jpeg_data = encode_image(image)
+
+                with image_lock:
+                    current_image = jpeg_data
+
+                previous_track = track_identity
+
+                print(
+                    f"Image generated and stored in memory. "
+                    f"Size: {len(jpeg_data)} bytes"
+                )
+
         except Exception as error:
             print(f"Error generating image: {error}")
 
