@@ -1,6 +1,5 @@
 import threading
 from io import BytesIO
-from pathlib import Path
 
 import gi
 import requests
@@ -22,10 +21,8 @@ TRACK_META_URL = "https://au.api.iheart.com/api/v3/live-meta/stream/9195/current
 
 UPDATE_INTERVAL = 5
 IMAGE_DEFINITION = 720
-OUTPUT_FILE = Path("now_playing.jpg")
 REQUEST_TIMEOUT = 10  # seconds
 
-IMAGE_FILE = OUTPUT_FILE
 VIDEO_WIDTH = 1280
 VIDEO_HEIGHT = 720
 VIDEO_FPS = 25
@@ -73,7 +70,7 @@ Gst.init(None)
 appsrc = None
 main_loop = None
 current_image = None
-current_mtime = None
+image_lock = threading.Lock()
 station_logo = None
 
 
@@ -196,29 +193,33 @@ def generate_image():
     )
     return image
 
-
-def save_image(image):
-    """Atomically replace the JPEG so GStreamer never reads a partial file."""
-    temporary_file = OUTPUT_FILE.with_suffix(".tmp.jpg")
-    image.save(temporary_file, "JPEG", quality=90, optimize=True)
-    temporary_file.replace(OUTPUT_FILE)
+def encode_image(image):
+    """Encode the PIL image to JPEG bytes."""
+    output = BytesIO()
+    image.save(output, format="JPEG", quality=85)
+    return output.getvalue()
 
 
 def run_image_worker(stop_event):
+    global current_image
     """Generate images outside the GLib/GStreamer main loop.
 
     Event.wait() sleeps without busy-waiting and returns immediately at shutdown.
     """
     print(
-        f"Now playing image generator started. Output file: {OUTPUT_FILE} - "
+        f"Now playing image generator started. - "
         f"Update interval: {UPDATE_INTERVAL} seconds"
     )
 
     while not stop_event.is_set():
         try:
             image = generate_image()
-            save_image(image)
-            print(f"Image generated and saved to {OUTPUT_FILE}")
+
+            jpeg_data = encode_image(image)
+            with image_lock:
+                current_image = jpeg_data
+            
+            print(f"Image generated and stored in memory. Size: {len(jpeg_data)} bytes")
         except Exception as error:
             print(f"Error generating image: {error}")
 
@@ -231,35 +232,11 @@ def run_image_worker(stop_event):
 # GSTREAMER VIDEO INPUT
 # ------------------------------------------------------------------------------
 
-def load_image():
-    global current_image, current_mtime
-
-    try:
-        mtime = IMAGE_FILE.stat().st_mtime_ns
-    except FileNotFoundError:
-        if not hasattr(load_image, "_missing_image_reported"):
-            print(f"Waiting for image generator: {IMAGE_FILE}")
-            load_image._missing_image_reported = True
-        return None
-
-    load_image._missing_image_reported = False
-
-    if current_image is not None and mtime == current_mtime:
-        return current_image
-
-    try:
-        with open(IMAGE_FILE, "rb") as file:
-            current_image = file.read()
-        current_mtime = mtime
-        print(f"Loaded new image: {IMAGE_FILE}")
-        return current_image
-    except Exception as error:
-        print(f"Error reading image: {error}")
-        return None
-
 
 def push_frame():
-    image_data = load_image()
+    with image_lock:
+        image_data = current_image
+
     if image_data is None:
         return True
 
@@ -270,6 +247,7 @@ def push_frame():
 
     buffer.fill(0, image_data)
     result = appsrc.emit("push-buffer", buffer)
+
     if result != Gst.FlowReturn.OK:
         print(f"Error pushing video frame: {result}")
         return False
@@ -428,7 +406,6 @@ def main():
     global main_loop
 
     print("Starting video/audio streamer")
-    print(f"Image:       {IMAGE_FILE}")
     print(f"Resolution:  {VIDEO_WIDTH}x{VIDEO_HEIGHT}")
     print(f"Frame rate:  {VIDEO_FPS} fps")
     print(f"Icecast:     {ICECAST_URL}")
