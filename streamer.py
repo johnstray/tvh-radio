@@ -244,7 +244,7 @@ def run_image_worker(stop_event):
             jpeg_data = encode_image(image)
             with image_lock:
                 current_image = jpeg_data
-            
+
             print(f"Image generated and stored in memory. Size: {len(jpeg_data)} bytes")
         except Exception as error:
             print(f"Error generating image: {error}")
@@ -430,6 +430,7 @@ def on_message(bus, message):
 
 def main():
     global main_loop
+    global CHANNEL_NAME
     global STATION_NAME
     global STATION_LOGO
     global TRACK_META_URL
@@ -444,6 +445,7 @@ def main():
     config_file = Path(sys.argv[1])
     config = load_config(config_file)
 
+    CHANNEL_NAME = config["channel_name"]
     STATION_NAME = config["station_name"]
     STATION_LOGO = config["station_logo"]
     TRACK_META_URL = config["track_meta_url"]
@@ -453,7 +455,7 @@ def main():
 
     print("Starting video/audio streamer")
     print(f"Configuration: {config_file}")
-    print(f"Channel:       {config['channel_name']}")
+    print(f"Channel:       {CHANNEL_NAME}")
     print(f"Station:       {STATION_NAME}")
     print(f"Resolution:    {VIDEO_WIDTH}x{VIDEO_HEIGHT}")
     print(f"Frame rate:    {VIDEO_FPS} fps")
