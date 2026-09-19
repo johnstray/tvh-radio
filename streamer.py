@@ -255,12 +255,10 @@ def get_track_metadata():
         return response.json(), "success"
 
     except requests.RequestException as error:
-        logger.error(f"Error fetching track metadata: {error}")
-        return None, "error"
+        return error, "error"
 
     except ValueError as error:
-        logger.error(f"Error parsing track metadata JSON: {error}")
-        return None, "error"
+        return error, "error"
 
 
 def get_album_artwork(image_path):
@@ -457,7 +455,7 @@ def run_image_worker(stop_event):
                 metadata_empty_count = 0
 
                 if not metadata_error_active:
-                    logger.error("Metadata API unavailable. Using fallback metadata.")
+                    logger.error(f"Metadata API unavailable. {data}")
                     metadata_error_active = True
 
                 fallback_data = {
