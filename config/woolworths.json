@@ -2,6 +2,7 @@
     "channel_name": "woolworths",
     "station_name": "Woolworths Radio",
     "station_logo": "https://i.iheart.com/v3/re/new_assets/617f2881bd5039e366ef0289?ops=fit(240%2C240)",
+    "fallback_station_logo": "../images/station_logo.png",
     "track_meta_url": "https://au.api.iheart.com/api/v3/live-meta/stream/9195/currentTrackMeta",
     "icecast_url": "http://arn-instore.streamguys1.com/wwr_007",
     "udp_host": "127.0.0.1",
@@ -10,6 +11,6 @@
         "title": "Woolworths Radio",
         "artist": "Clear Channel Australia",
         "album": "iHeartRadio",
-        "image_path": "https://i.iheart.com/v3/re/new_assets/617f2881bd5039e366ef0289?ops=fit(240%2C240)"
+        "image_path": "../images/album_cover.png"
     }
 }

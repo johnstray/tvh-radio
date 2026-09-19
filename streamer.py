@@ -1,6 +1,7 @@
 import json
 import sys
 import threading
+import time
 from io import BytesIO
 from pathlib import Path
 
@@ -22,6 +23,7 @@ UPDATE_INTERVAL = 5
 METADATA_EMPTY_THRESHOLD = 3 # number of consecutive empty metadata responses before using fallback
 IMAGE_DEFINITION = 720
 REQUEST_TIMEOUT = 10  # seconds
+STATION_LOGO_RETRY_INTERVAL = 10  # seconds
 
 VIDEO_WIDTH = 1280
 VIDEO_HEIGHT = 720
@@ -45,6 +47,7 @@ def load_config(config_file):
         "channel_name",
         "station_name",
         "station_logo",
+        "fallback_station_logo",
         "track_meta_url",
         "icecast_url",
         "udp_host",
@@ -113,29 +116,116 @@ main_loop = None
 current_image = None
 image_lock = threading.Lock()
 station_logo = None
+station_logo_source = None
+station_logo_retry_time = 0
 fallback_metadata = None
+config_directory = None
 
+pipeline = None
+icecast_source = None
+audio_convert = None
+audio_failed = False
+audio_reconnecting = False
+reconnect_source_id = None
 
 # ------------------------------------------------------------------------------
 # IMAGE GENERATION
 # ------------------------------------------------------------------------------
 
-def get_station_logo():
-    """Fetch the logo once, then reuse it for later images."""
-    global station_logo
+def resolve_local_path(path):
+    """Resolve a configured local path relative to the configuration file."""
+    path = Path(path)
 
-    if station_logo is not None:
+    if path.is_absolute():
+        return path
+
+    return config_directory / path
+
+
+def get_station_logo():
+    """Load and cache the station logo, retrying the primary source periodically."""
+    global station_logo
+    global station_logo_source
+    global station_logo_retry_time
+
+    now = time.monotonic()
+
+    if station_logo is not None and station_logo_source == "primary":
         return station_logo
+
+    if (
+        station_logo is not None
+        and now < station_logo_retry_time
+    ):
+        return station_logo
+
+    if STATION_LOGO.startswith(("http://", "https://")):
+        try:
+            response = requests.get(STATION_LOGO, timeout=REQUEST_TIMEOUT)
+            response.raise_for_status()
+
+            station_logo = Image.open(
+                BytesIO(response.content)
+            ).convert("RGBA")
+
+            if station_logo_source != "primary":
+                print("Primary station logo restored.")
+
+            station_logo_source = "primary"
+            station_logo_retry_time = 0
+
+            return station_logo
+
+        except requests.RequestException as error:
+            print(f"Error fetching station logo: {error}")
+
+        except Exception as error:
+            print(f"Error processing station logo: {error}")
+
+    else:
+        local_path = resolve_local_path(STATION_LOGO)
+
+        try:
+            station_logo = Image.open(local_path).convert("RGBA")
+            station_logo_source = "primary"
+            station_logo_retry_time = 0
+
+            return station_logo
+
+        except FileNotFoundError:
+            print(f"Station logo file not found: {local_path}")
+
+        except Exception as error:
+            print(f"Error processing local station logo: {error}")
+
+    fallback_logo_path = resolve_local_path(FALLBACK_STATION_LOGO)
 
     try:
-        response = requests.get(STATION_LOGO, timeout=REQUEST_TIMEOUT)
-        response.raise_for_status()
-        station_logo = Image.open(BytesIO(response.content)).convert("RGBA")
+        station_logo = Image.open(fallback_logo_path).convert("RGBA")
+        station_logo_source = "fallback"
+        station_logo_retry_time = now + STATION_LOGO_RETRY_INTERVAL
+
         return station_logo
-    except requests.RequestException as error:
-        print(f"Error fetching station logo: {error}")
+
+    except FileNotFoundError:
+        print(f"Fallback station logo file not found: {fallback_logo_path}")
+
     except Exception as error:
-        print(f"Error processing station logo: {error}")
+        print(f"Error processing fallback station logo: {error}")
+
+    generic_logo_path = (
+        Path(__file__).resolve().parent / "images" / "station_logo.png"
+    )
+
+    try:
+        station_logo = Image.open(generic_logo_path).convert("RGBA")
+        station_logo_source = "generic"
+        station_logo_retry_time = now + STATION_LOGO_RETRY_INTERVAL
+
+        return station_logo
+
+    except Exception as error:
+        print(f"Error processing generic station logo: {error}")
 
     return None
 
@@ -160,18 +250,40 @@ def get_track_metadata():
         return None, "error"
 
 
-def get_album_artwork(image_url):
-    if not image_url:
+def get_album_artwork(image_path):
+    if not image_path:
         return None
 
+    if image_path.startswith(("http://", "https://")):
+        try:
+            response = requests.get(image_path, timeout=REQUEST_TIMEOUT)
+            response.raise_for_status()
+            return Image.open(
+                BytesIO(response.content)
+            ).convert("RGB")
+        except requests.RequestException as error:
+            print(f"Error fetching album artwork: {error}")
+        except Exception as error:
+            print(f"Error processing album artwork: {error}")
+
+    else:
+        local_path = resolve_local_path(image_path)
+
+        try:
+            return Image.open(local_path).convert("RGB")
+        except FileNotFoundError:
+            print(f"Album artwork file not found: {local_path}")
+        except Exception as error:
+            print(f"Error processing local album artwork: {error}")
+
+    generic_artwork_path = (
+        Path(__file__).resolve().parent / "images" / "album_cover.png"
+    )
+
     try:
-        response = requests.get(image_url, timeout=REQUEST_TIMEOUT)
-        response.raise_for_status()
-        return Image.open(BytesIO(response.content)).convert("RGB")
-    except requests.RequestException as error:
-        print(f"Error fetching album artwork: {error}")
+        return Image.open(generic_artwork_path).convert("RGB")
     except Exception as error:
-        print(f"Error processing album artwork: {error}")
+        print(f"Error processing generic album artwork: {error}")
 
     return None
 
@@ -400,6 +512,8 @@ def push_frame():
 
 def create_pipeline():
     global appsrc
+    global icecast_source
+    global audio_convert
 
     pipeline = Gst.Pipeline.new("stream-pipeline")
 
@@ -429,6 +543,9 @@ def create_pipeline():
     ]
     if any(element is None for element in elements):
         raise RuntimeError("Unable to create one or more GStreamer elements")
+
+    icecast_source = source
+    audio_convert = audioconvert
 
     appsrc.set_property("format", Gst.Format.TIME)
     appsrc.set_property("is-live", True)
@@ -499,6 +616,9 @@ def create_pipeline():
 
 
 def on_audio_pad_added(decodebin, pad, audioconvert):
+    global audio_failed
+    global audio_reconnecting
+
     caps = pad.get_current_caps() or pad.query_caps(None)
     media_type = caps.get_structure(0).get_name()
     print(f"New Icecast stream pad: {media_type}")
@@ -515,22 +635,153 @@ def on_audio_pad_added(decodebin, pad, audioconvert):
         else:
             print("Icecast audio linked successfully.")
 
+            if audio_failed:
+                print("Icecast audio connection restored.")
+
+            audio_failed = False
+            audio_reconnecting = False
+
+
+def reconnect_audio_source():
+    global icecast_source
+    global audio_failed
+    global audio_reconnecting
+    global reconnect_source_id
+
+    print("Attempting to reconnect Icecast audio source...")
+    audio_reconnecting = True
+
+    old_source = icecast_source
+
+    if old_source is not None:
+        print("Removing failed Icecast source...")
+
+        old_source.set_state(Gst.State.NULL)
+        pipeline.remove(old_source)
+
+    new_source = Gst.ElementFactory.make(
+        "uridecodebin3",
+        "icecast-source",
+    )
+
+    if new_source is None:
+        print("Unable to create new Icecast source.")
+        return True
+
+    new_source.set_property("uri", ICECAST_URL)
+    new_source.connect(
+        "pad-added",
+        on_audio_pad_added,
+        audio_convert,
+    )
+
+    pipeline.add(new_source)
+
+    icecast_source = new_source
+
+    new_source.sync_state_with_parent()
+
+    print("New Icecast source started.")
+
+    audio_reconnecting = False
+
+    reconnect_source_id = None
+
+    return False
+
 
 def on_message(bus, message):
+    global audio_failed
+    global audio_reconnecting
+    global reconnect_source_id
+
     message_type = message.type
 
     if message_type == Gst.MessageType.ERROR:
         error, debug = message.parse_error()
-        print(f"GStreamer error: {error}")
+
+        source = message.src
+        source_name = source.get_name() if source is not None else "unknown"
+
+        print(f"GStreamer error from {source_name}: {error}")
+
         if debug:
             print(f"Debug information: {debug}")
-        main_loop.quit()
+
+        icecast_source_element = pipeline.get_by_name("icecast-source")
+        is_audio_source_error = False
+
+        if icecast_source_element is not None and source is not None:
+            current = source
+
+            while current is not None:
+                if current == icecast_source_element:
+                    is_audio_source_error = True
+                    break
+
+                current = current.get_parent()
+
+        if is_audio_source_error:
+            if not audio_failed:
+                print(
+                    "Icecast audio source failed. "
+                    "Video will continue running."
+                )
+
+            audio_failed = True
+
+            if reconnect_source_id is None and not audio_reconnecting:
+                print("Scheduling Icecast audio reconnect in 5 seconds.")
+
+                reconnect_source_id = GLib.timeout_add_seconds(
+                    5,
+                    reconnect_audio_source,
+                )
+        else:
+            main_loop.quit()
+
     elif message_type == Gst.MessageType.EOS:
-        print("GStreamer reached end of stream")
-        main_loop.quit()
+        source = message.src
+        source_name = source.get_name() if source is not None else "unknown"
+
+        print(f"GStreamer reached end of stream from {source_name}")
+
+        icecast_source_element = pipeline.get_by_name("icecast-source")
+        is_audio_source_eos = False
+
+        if icecast_source_element is not None and source is not None:
+            current = source
+
+            while current is not None:
+                if current == icecast_source_element:
+                    is_audio_source_eos = True
+                    break
+
+                current = current.get_parent()
+
+        if is_audio_source_eos:
+            if not audio_failed:
+                print(
+                    "Icecast audio source reached end of stream. "
+                    "Video will continue running."
+                )
+
+            audio_failed = True
+
+            if reconnect_source_id is None and not audio_reconnecting:
+                print("Scheduling Icecast audio reconnect in 5 seconds.")
+
+                reconnect_source_id = GLib.timeout_add_seconds(
+                    5,
+                    reconnect_audio_source,
+                )
+        else:
+            main_loop.quit()
+
     elif message_type == Gst.MessageType.WARNING:
         warning, debug = message.parse_warning()
         print(f"GStreamer warning: {warning}")
+
         if debug:
             print(f"Debug information: {debug}")
 
@@ -543,14 +794,17 @@ def on_message(bus, message):
 
 def main():
     global main_loop
+    global pipeline
     global CHANNEL_NAME
     global STATION_NAME
     global STATION_LOGO
+    global FALLBACK_STATION_LOGO
     global TRACK_META_URL
     global ICECAST_URL
     global UDP_HOST
     global UDP_PORT
     global fallback_metadata
+    global config_directory
 
     if len(sys.argv) != 2:
         print("Usage: python3 streamer.py <config-file>")
@@ -558,10 +812,12 @@ def main():
 
     config_file = Path(sys.argv[1])
     config = load_config(config_file)
+    config_directory = config_file.resolve().parent
 
     CHANNEL_NAME = config["channel_name"]
     STATION_NAME = config["station_name"]
     STATION_LOGO = config["station_logo"]
+    FALLBACK_STATION_LOGO = config["fallback_station_logo"]
     TRACK_META_URL = config["track_meta_url"]
     ICECAST_URL = config["icecast_url"]
     UDP_HOST = config["udp_host"]
@@ -607,6 +863,9 @@ def main():
 
         if source_id is not None:
             GLib.source_remove(source_id)
+
+        if reconnect_source_id is not None:
+            GLib.source_remove(reconnect_source_id)
 
         if appsrc is not None:
             appsrc.emit("end-of-stream")
