@@ -115,6 +115,12 @@ image_lock = threading.Lock()
 station_logo = None
 fallback_metadata = None
 
+pipeline = None
+icecast_source = None
+audio_convert = None
+audio_failed = False
+audio_reconnecting = False
+reconnect_source_id = None
 
 # ------------------------------------------------------------------------------
 # IMAGE GENERATION
@@ -400,6 +406,8 @@ def push_frame():
 
 def create_pipeline():
     global appsrc
+    global icecast_source
+    global audio_convert
 
     pipeline = Gst.Pipeline.new("stream-pipeline")
 
@@ -429,6 +437,9 @@ def create_pipeline():
     ]
     if any(element is None for element in elements):
         raise RuntimeError("Unable to create one or more GStreamer elements")
+
+    icecast_source = source
+    audio_convert = audioconvert
 
     appsrc.set_property("format", Gst.Format.TIME)
     appsrc.set_property("is-live", True)
@@ -499,6 +510,9 @@ def create_pipeline():
 
 
 def on_audio_pad_added(decodebin, pad, audioconvert):
+    global audio_failed
+    global audio_reconnecting
+
     caps = pad.get_current_caps() or pad.query_caps(None)
     media_type = caps.get_structure(0).get_name()
     print(f"New Icecast stream pad: {media_type}")
@@ -515,22 +529,153 @@ def on_audio_pad_added(decodebin, pad, audioconvert):
         else:
             print("Icecast audio linked successfully.")
 
+            if audio_failed:
+                print("Icecast audio connection restored.")
+
+            audio_failed = False
+            audio_reconnecting = False
+
+
+def reconnect_audio_source():
+    global icecast_source
+    global audio_failed
+    global audio_reconnecting
+    global reconnect_source_id
+
+    print("Attempting to reconnect Icecast audio source...")
+    audio_reconnecting = True
+
+    old_source = icecast_source
+
+    if old_source is not None:
+        print("Removing failed Icecast source...")
+
+        old_source.set_state(Gst.State.NULL)
+        pipeline.remove(old_source)
+
+    new_source = Gst.ElementFactory.make(
+        "uridecodebin3",
+        "icecast-source",
+    )
+
+    if new_source is None:
+        print("Unable to create new Icecast source.")
+        return True
+
+    new_source.set_property("uri", ICECAST_URL)
+    new_source.connect(
+        "pad-added",
+        on_audio_pad_added,
+        audio_convert,
+    )
+
+    pipeline.add(new_source)
+
+    icecast_source = new_source
+
+    new_source.sync_state_with_parent()
+
+    print("New Icecast source started.")
+
+    audio_reconnecting = False
+
+    reconnect_source_id = None
+
+    return False
+
 
 def on_message(bus, message):
+    global audio_failed
+    global audio_reconnecting
+    global reconnect_source_id
+
     message_type = message.type
 
     if message_type == Gst.MessageType.ERROR:
         error, debug = message.parse_error()
-        print(f"GStreamer error: {error}")
+
+        source = message.src
+        source_name = source.get_name() if source is not None else "unknown"
+
+        print(f"GStreamer error from {source_name}: {error}")
+
         if debug:
             print(f"Debug information: {debug}")
-        main_loop.quit()
+
+        icecast_source_element = pipeline.get_by_name("icecast-source")
+        is_audio_source_error = False
+
+        if icecast_source_element is not None and source is not None:
+            current = source
+
+            while current is not None:
+                if current == icecast_source_element:
+                    is_audio_source_error = True
+                    break
+
+                current = current.get_parent()
+
+        if is_audio_source_error:
+            if not audio_failed:
+                print(
+                    "Icecast audio source failed. "
+                    "Video will continue running."
+                )
+
+            audio_failed = True
+
+            if reconnect_source_id is None and not audio_reconnecting:
+                print("Scheduling Icecast audio reconnect in 5 seconds.")
+
+                reconnect_source_id = GLib.timeout_add_seconds(
+                    5,
+                    reconnect_audio_source,
+                )
+        else:
+            main_loop.quit()
+
     elif message_type == Gst.MessageType.EOS:
-        print("GStreamer reached end of stream")
-        main_loop.quit()
+        source = message.src
+        source_name = source.get_name() if source is not None else "unknown"
+
+        print(f"GStreamer reached end of stream from {source_name}")
+
+        icecast_source_element = pipeline.get_by_name("icecast-source")
+        is_audio_source_eos = False
+
+        if icecast_source_element is not None and source is not None:
+            current = source
+
+            while current is not None:
+                if current == icecast_source_element:
+                    is_audio_source_eos = True
+                    break
+
+                current = current.get_parent()
+
+        if is_audio_source_eos:
+            if not audio_failed:
+                print(
+                    "Icecast audio source reached end of stream. "
+                    "Video will continue running."
+                )
+
+            audio_failed = True
+
+            if reconnect_source_id is None and not audio_reconnecting:
+                print("Scheduling Icecast audio reconnect in 5 seconds.")
+
+                reconnect_source_id = GLib.timeout_add_seconds(
+                    5,
+                    reconnect_audio_source,
+                )
+        else:
+            main_loop.quit()
+
     elif message_type == Gst.MessageType.WARNING:
         warning, debug = message.parse_warning()
         print(f"GStreamer warning: {warning}")
+
         if debug:
             print(f"Debug information: {debug}")
 
@@ -543,6 +688,7 @@ def on_message(bus, message):
 
 def main():
     global main_loop
+    global pipeline
     global CHANNEL_NAME
     global STATION_NAME
     global STATION_LOGO
@@ -607,6 +753,9 @@ def main():
 
         if source_id is not None:
             GLib.source_remove(source_id)
+
+        if reconnect_source_id is not None:
+            GLib.source_remove(reconnect_source_id)
 
         if appsrc is not None:
             appsrc.emit("end-of-stream")
