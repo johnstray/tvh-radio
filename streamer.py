@@ -1,4 +1,5 @@
 import json
+import signal
 import sys
 import threading
 import time
@@ -792,6 +793,15 @@ def on_message(bus, message):
 # MAIN
 # ------------------------------------------------------------------------------
 
+def handle_shutdown_signal(signum, frame):
+    """Request a clean shutdown when the process receives a termination signal."""
+    signal_name = signal.Signals(signum).name
+    print(f"Received {signal_name}. Shutting down streamer...")
+
+    if main_loop is not None:
+        main_loop.quit()
+
+
 def main():
     global main_loop
     global pipeline
@@ -852,6 +862,8 @@ def main():
         bus.connect("message", on_message)
 
         main_loop = GLib.MainLoop()
+        signal.signal(signal.SIGINT, handle_shutdown_signal)
+        signal.signal(signal.SIGTERM, handle_shutdown_signal)
         pipeline.set_state(Gst.State.PLAYING)
         source_id = GLib.timeout_add(int(1000 / VIDEO_FPS), push_frame)
         main_loop.run()
