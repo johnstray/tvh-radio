@@ -19,6 +19,7 @@ from gi.repository import GLib, Gst, GstApp
 # ------------------------------------------------------------------------------
 
 UPDATE_INTERVAL = 5
+METADATA_EMPTY_THRESHOLD = 3 # number of consecutive empty metadata responses before using fallback
 IMAGE_DEFINITION = 720
 REQUEST_TIMEOUT = 10  # seconds
 
@@ -140,24 +141,23 @@ def get_station_logo():
 
 
 def get_track_metadata():
-    """Return current track metadata, or the existing station fallback."""
-    default_data = {
-        "title": fallback_metadata["title"],
-        "artist": fallback_metadata["artist"],
-        "album": fallback_metadata["album"],
-        "imagePath": fallback_metadata["image_path"],
-    }
-
     try:
         response = requests.get(TRACK_META_URL, timeout=REQUEST_TIMEOUT)
+
+        if response.status_code == 204:
+            return None, "empty"
+
         response.raise_for_status()
-        return response.json()
+
+        return response.json(), "success"
+
     except requests.RequestException as error:
         print(f"Error fetching track metadata: {error}")
-    except ValueError as error:
-        print(f"Error parsing track metadata: {error}")
+        return None, "error"
 
-    return default_data
+    except ValueError as error:
+        print(f"Error parsing track metadata JSON: {error}")
+        return None, "error"
 
 
 def get_album_artwork(image_url):
@@ -244,9 +244,15 @@ def encode_image(image):
 
 
 def run_image_worker(stop_event):
+    """Generate images outside the GLib/GStreamer main loop.
+
+    Event.wait() sleeps without busy-waiting and returns immediately at shutdown.
+    """
     global current_image
 
     previous_track = None
+    metadata_empty_count = 0
+    fallback_active = False
 
     print(
         f"Now playing image generator started. - "
@@ -255,24 +261,103 @@ def run_image_worker(stop_event):
 
     while not stop_event.is_set():
         try:
-            data = get_track_metadata()
-            track_identity = get_track_identity(data)
+            data, result = get_track_metadata()
 
-            if track_identity != previous_track:
-                print("Track metadata changed. Generating new image.")
+            if result == "success":
+                metadata_empty_count = 0
 
-                image = generate_image(data)
-                jpeg_data = encode_image(image)
+                track_identity = get_track_identity(data)
 
-                with image_lock:
-                    current_image = jpeg_data
+                if track_identity != previous_track:
+                    print("Track metadata changed. Generating new image.")
+                    print(f"Track: {data.get('title')} - {data.get('artist')} - {data.get('album')}")
 
-                previous_track = track_identity
+                    image = generate_image(data)
+                    jpeg_data = encode_image(image)
 
-                print(
-                    f"Image generated and stored in memory. "
-                    f"Size: {len(jpeg_data)} bytes"
-                )
+                    with image_lock:
+                        current_image = jpeg_data
+
+                    previous_track = track_identity
+                    fallback_active = False
+
+                    print(
+                        f"Image generated and stored in memory. "
+                        f"Size: {len(jpeg_data)} bytes"
+                    )
+
+            elif result == "empty":
+                if not fallback_active:
+                    metadata_empty_count += 1
+
+                    print(
+                        f"Metadata API returned HTTP 204 "
+                        f"({metadata_empty_count}/{METADATA_EMPTY_THRESHOLD})"
+                    )
+
+                    if metadata_empty_count >= METADATA_EMPTY_THRESHOLD:
+                        fallback_data = {
+                            "title": fallback_metadata["title"],
+                            "artist": fallback_metadata["artist"],
+                            "album": fallback_metadata["album"],
+                            "imagePath": fallback_metadata["image_path"],
+                        }
+
+                        fallback_identity = get_track_identity(fallback_data)
+
+                        if fallback_identity != previous_track:
+                            print(
+                                "Metadata unavailable. "
+                                "Generating fallback image."
+                            )
+
+                            image = generate_image(fallback_data)
+                            jpeg_data = encode_image(image)
+
+                            with image_lock:
+                                current_image = jpeg_data
+
+                            previous_track = fallback_identity
+
+                            print(
+                                f"Fallback image generated and stored in memory. "
+                                f"Size: {len(jpeg_data)} bytes"
+                            )
+
+                        fallback_active = True
+
+            else:
+                metadata_empty_count = 0
+
+                fallback_data = {
+                    "title": fallback_metadata["title"],
+                    "artist": fallback_metadata["artist"],
+                    "album": fallback_metadata["album"],
+                    "imagePath": fallback_metadata["image_path"],
+                }
+
+                fallback_identity = get_track_identity(fallback_data)
+
+                if fallback_identity != previous_track:
+                    print(
+                        "Metadata API unavailable. "
+                        "Generating fallback image."
+                    )
+
+                    image = generate_image(fallback_data)
+                    jpeg_data = encode_image(image)
+
+                    with image_lock:
+                        current_image = jpeg_data
+
+                    previous_track = fallback_identity
+
+                    print(
+                        f"Fallback image generated and stored in memory. "
+                        f"Size: {len(jpeg_data)} bytes"
+                    )
+
+                fallback_active = True
 
         except Exception as error:
             print(f"Error generating image: {error}")
