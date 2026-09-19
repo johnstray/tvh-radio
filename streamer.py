@@ -23,7 +23,7 @@ UPDATE_INTERVAL = 5
 METADATA_EMPTY_THRESHOLD = 3 # number of consecutive empty metadata responses before using fallback
 IMAGE_DEFINITION = 720
 REQUEST_TIMEOUT = 10  # seconds
-STATION_LOGO_RETRY_INTERVAL = 10  # seconds
+STATION_LOGO_RETRY_INTERVAL = 300  # seconds
 
 VIDEO_WIDTH = 1280
 VIDEO_HEIGHT = 720
