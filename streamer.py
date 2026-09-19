@@ -22,7 +22,7 @@ from gi.repository import GLib, Gst, GstApp
 # ------------------------------------------------------------------------------
 
 UPDATE_INTERVAL = 5
-METADATA_EMPTY_THRESHOLD = 3 # number of consecutive empty metadata responses before using fallback
+METADATA_EMPTY_THRESHOLD = 3  # number of consecutive empty metadata responses before using fallback
 IMAGE_DEFINITION = 720
 REQUEST_TIMEOUT = 10  # seconds
 STATION_LOGO_RETRY_INTERVAL = 300  # seconds
@@ -378,6 +378,7 @@ def run_image_worker(stop_event):
     previous_track = None
     metadata_empty_count = 0
     fallback_active = False
+    metadata_error_active = False
 
     logger.info(
         f"Now playing image generator started. - "
@@ -391,11 +392,15 @@ def run_image_worker(stop_event):
             if result == "success":
                 metadata_empty_count = 0
 
+                if metadata_error_active:
+                    logger.info("Metadata API recovered.")
+                    metadata_error_active = False
+
                 track_identity = get_track_identity(data)
 
                 if track_identity != previous_track:
                     logger.info("Track metadata changed. Generating new image.")
-                    logger.info (f"Track: {data.get('title')} - {data.get('artist')} - {data.get('album')}")
+                    logger.info(f"Track: {data.get('title')} - {data.get('artist')} - {data.get('album')}")
 
                     image = generate_image(data)
                     jpeg_data = encode_image(image)
@@ -451,6 +456,10 @@ def run_image_worker(stop_event):
             else:
                 metadata_empty_count = 0
 
+                if not metadata_error_active:
+                    logger.error("Metadata API unavailable. Using fallback metadata.")
+                    metadata_error_active = True
+
                 fallback_data = {
                     "title": fallback_metadata["title"],
                     "artist": fallback_metadata["artist"],
@@ -461,10 +470,7 @@ def run_image_worker(stop_event):
                 fallback_identity = get_track_identity(fallback_data)
 
                 if fallback_identity != previous_track:
-                    logger.warning(
-                        "Metadata API unavailable. "
-                        "Generating fallback image."
-                    )
+                    logger.warning("Generating fallback image.")
 
                     image = generate_image(fallback_data)
                     jpeg_data = encode_image(image)
@@ -676,7 +682,9 @@ def reconnect_audio_source():
 
     if new_source is None:
         logger.error("Unable to create new Icecast source.")
-        return True
+        audio_reconnecting = False
+        reconnect_source_id = None
+        return False
 
     new_source.set_property("uri", ICECAST_URL)
     new_source.connect(
