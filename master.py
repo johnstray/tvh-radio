@@ -15,6 +15,7 @@ RESTART_RESET_TIME = 300  # seconds
 
 logger = logging.getLogger("tvh-radio.master")
 processes = {}
+shutdown_requested = False
 
 def configure_logging():
     """Configure logging for the master process."""
@@ -93,16 +94,27 @@ def load_channel_configs(config_directory):
 # Streamer Process Management
 # ------------------------------------------------------------------------------
 
-def start_channel(config_file):
+def start_channel(channel):
     """Start a streamer process for a channel."""
-    return subprocess.Popen(
-        [sys.executable, "streamer.py", str(config_file)],
+    process = subprocess.Popen(
+        [sys.executable, "streamer.py", str(channel["config_file"])],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
         bufsize=1,
-        start_new_session=True
+        start_new_session=True,
     )
+
+    channel["process"] = process
+
+    output_thread = threading.Thread(
+        target=read_channel_output,
+        args=(channel,),
+        daemon=True,
+    )
+    output_thread.start()
+
+    return process
 
 
 def is_restart_loop(channel):
@@ -118,22 +130,23 @@ def is_restart_loop(channel):
     )
 
 
-def restart_channel(config_file, channel_name, channel):
+def restart_channel(channel):
     """Restart a channel process."""
     channel["restart_count"] += 1
     channel["last_restart"] = time.monotonic()
 
-    logger.warning(f"Restarting channel '{channel_name}'.")
+    logger.warning(f"Restarting channel '{channel['channel_name']}'.")
 
-    process = start_channel(config_file)
+    process = start_channel(channel)
+    channel["process"] = process
 
     logger.info(
-        f"Channel '{channel_name}' restarted with PID {process.pid}."
+        f"Channel '{channel['channel_name']}' restarted with PID {process.pid}."
     )
 
     output_thread = threading.Thread(
         target=read_channel_output,
-        args=(process, channel_name),
+        args=(channel,),
         daemon=True,
     )
     output_thread.start()
@@ -141,10 +154,23 @@ def restart_channel(config_file, channel_name, channel):
     return process
 
 
-def read_channel_output(process, channel_name):
+def read_channel_output(channel):
     """Read and log output from a channel process."""
-    for line in process.stdout:
-        logger.info(f"[{channel_name}] {line.rstrip()}")
+    for line in channel["process"].stdout:
+        logger.info(f"[{channel['channel_name']}] {line.rstrip()}")
+
+
+def create_channel_state(config_file, config):
+    """Create the runtime state for a channel."""
+    return {
+        "channel_name": config["channel_name"],
+        "config": config,
+        "config_file": config_file,
+        "process": None,
+        "stopping": False,
+        "restart_count": 0,
+        "last_restart": None,
+    }
 
 
 def start_channels(channels):
@@ -152,40 +178,28 @@ def start_channels(channels):
     processes = {}
 
     for config_file, channel in channels:
-        channel_name = channel["channel_name"]
+        channel_state = create_channel_state(config_file, channel)
+        channel_name = channel_state["channel_name"]
 
         logger.info(f"Starting channel: {channel_name}")
 
-        process = start_channel(config_file)
+        process = start_channel(channel_state)
 
         logger.info(
             f"Channel '{channel_name}' started with PID {process.pid}."
         )
 
-        processes[channel_name] = {
-            "config_file": config_file,
-            "process": process,
-            "stopping": False,
-            "restart_count": 0,
-            "last_restart": None
-        }
-
-        output_thread = threading.Thread(
-            target=read_channel_output,
-            args=(process, channel_name),
-            daemon=True,
-        )
-        output_thread.start()
+        processes[channel_name] = channel_state
 
     return processes
 
 
 def monitor_channels(processes):
     """Monitor all running channel processes."""
-    while processes:
-        exited_channels = []
+    while not shutdown_requested:
+        channels_to_remove = []
 
-        for channel_name, channel in processes.items():
+        for channel in processes.values():
             process = channel["process"]
 
             if (
@@ -193,7 +207,7 @@ def monitor_channels(processes):
                 and time.monotonic() - channel["last_restart"] >= RESTART_RESET_TIME
             ):
                 logger.info(
-                    f"Channel '{channel_name}' has been healthy for "
+                    f"Channel '{channel['channel_name']}' has been healthy for "
                     f"{RESTART_RESET_TIME} seconds. Resetting restart history."
                 )
                 channel["restart_count"] = 0
@@ -204,38 +218,31 @@ def monitor_channels(processes):
 
                 if channel["stopping"]:
                     logger.info(
-                        f"Channel '{channel_name}' stopped intentionally."
+                        f"Channel '{channel['channel_name']}' stopped intentionally."
                     )
-                    exited_channels.append(channel_name)
+                    channels_to_remove.append(channel["channel_name"])
                     continue
 
                 logger.warning(
-                    f"Channel '{channel_name}' has exited "
+                    f"Channel '{channel['channel_name']}' has exited "
                     f"with code {exit_code}."
                 )
 
                 if exit_code != 0:
                     if is_restart_loop(channel):
                         logger.error(
-                            f"Channel '{channel_name}' is restarting too frequently. "
+                            f"Channel '{channel['channel_name']}' is restarting too frequently. "
                             f"Not restarting it again."
                         )
-                        exited_channels.append(channel_name)
+                        channels_to_remove.append(channel["channel_name"])
                         continue
 
-                    config_file = channel["config_file"]
-                    new_process = restart_channel(
-                        config_file,
-                        channel_name,
-                        channel
-                    )
-
-                    channel["process"] = new_process
+                    restart_channel(channel)
                     continue
 
-                exited_channels.append(channel_name)
+                channels_to_remove.append(channel["channel_name"])
 
-        for channel_name in exited_channels:
+        for channel_name in channels_to_remove:
             del processes[channel_name]
 
         time.sleep(1)
@@ -243,13 +250,12 @@ def monitor_channels(processes):
 
 def shutdown_channels(processes):
     """Request a graceful shutdown of all running channels."""
-    for channel_name, channel in processes.items():
-        process = channel["process"]
+    for channel in processes.values():
 
-        logger.info(f"Stopping channel '{channel_name}'.")
+        logger.info(f"Stopping channel '{channel['channel_name']}'.")
 
         channel["stopping"] = True
-        process.terminate()
+        channel["process"].terminate()
 
 
 # ------------------------------------------------------------------------------
@@ -258,9 +264,12 @@ def shutdown_channels(processes):
 
 def handle_shutdown_signal(signum, frame):
     """Handle a termination signal received by the master."""
+    global shutdown_requested
+
     signal_name = signal.Signals(signum).name
     logger.info(f"Received {signal_name}. Shutting down master.")
 
+    shutdown_requested = True
     shutdown_channels(processes)
 
 
