@@ -11,6 +11,7 @@ from pathlib import Path
 RESTART_LIMIT = 3  # count
 RESTART_WINDOW = 60  # seconds
 RESTART_RESET_TIME = 300  # seconds
+RESTART_BACKOFF_TIME = 10  # seconds
 
 
 logger = logging.getLogger("tvh-radio.master")
@@ -130,6 +131,17 @@ def is_restart_loop(channel):
     )
 
 
+def is_backoff_expired(channel):
+    """Return True if a channel's backoff period has expired."""
+    if channel["state"] != "backoff":
+        return False
+
+    if channel["next_restart"] is None:
+        return False
+
+    return time.monotonic() >= channel["next_restart"]
+
+
 def restart_channel(channel):
     """Restart a channel process."""
     channel["restart_count"] += 1
@@ -170,6 +182,8 @@ def create_channel_state(config_file, config):
         "stopping": False,
         "restart_count": 0,
         "last_restart": None,
+        "state": "running",
+        "next_restart": None
     }
 
 
@@ -202,6 +216,23 @@ def monitor_channels(processes):
         for channel in processes.values():
             process = channel["process"]
 
+            if channel["state"] == "backoff":
+                if is_backoff_expired(channel):
+                    logger.info(
+                        f"Backoff expired for channel '{channel['channel_name']}'. "
+                        "Attempting restart."
+                    )
+
+                    channel["restart_count"] = 0
+                    channel["last_restart"] = None
+                    channel["next_restart"] = None
+
+                    restart_channel(channel)
+
+                    channel["state"] = "running"
+
+                continue
+
             if (
                 channel["last_restart"] is not None
                 and time.monotonic() - channel["last_restart"] >= RESTART_RESET_TIME
@@ -230,11 +261,15 @@ def monitor_channels(processes):
 
                 if exit_code != 0:
                     if is_restart_loop(channel):
+                        channel["state"] = "backoff"
+                        channel["next_restart"] = (
+                            time.monotonic() + RESTART_BACKOFF_TIME
+                        )
+
                         logger.error(
                             f"Channel '{channel['channel_name']}' is restarting too frequently. "
-                            f"Not restarting it again."
+                            f"Entering backoff for {RESTART_BACKOFF_TIME} seconds."
                         )
-                        channels_to_remove.append(channel["channel_name"])
                         continue
 
                     restart_channel(channel)
