@@ -115,8 +115,6 @@ def start_channel(channel):
     )
     output_thread.start()
 
-    return process
-
 
 def is_restart_loop(channel):
     """Return True if a channel is restarting too frequently."""
@@ -150,20 +148,10 @@ def restart_channel(channel):
     logger.warning(f"Restarting channel '{channel['channel_name']}'.")
 
     process = start_channel(channel)
-    channel["process"] = process
 
     logger.info(
         f"Channel '{channel['channel_name']}' restarted with PID {process.pid}."
     )
-
-    output_thread = threading.Thread(
-        target=read_channel_output,
-        args=(channel,),
-        daemon=True,
-    )
-    output_thread.start()
-
-    return process
 
 
 def read_channel_output(channel):
@@ -200,7 +188,7 @@ def start_channels(channels):
         process = start_channel(channel_state)
 
         logger.info(
-            f"Channel '{channel_name}' started with PID {process.pid}."
+            f"Channel '{channel_name}' started with PID {channel_state['process']}."
         )
 
         processes[channel_name] = channel_state
