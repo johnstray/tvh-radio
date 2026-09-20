@@ -11,7 +11,7 @@ from pathlib import Path
 RESTART_LIMIT = 3  # count
 RESTART_WINDOW = 60  # seconds
 RESTART_RESET_TIME = 300  # seconds
-RESTART_BACKOFF_TIME = 10  # seconds
+RESTART_BACKOFF_TIME = 300  # seconds
 
 
 logger = logging.getLogger("tvh-radio.master")
