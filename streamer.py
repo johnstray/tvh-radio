@@ -1,4 +1,5 @@
 import json
+import logging
 import signal
 import sys
 import threading
@@ -21,7 +22,7 @@ from gi.repository import GLib, Gst, GstApp
 # ------------------------------------------------------------------------------
 
 UPDATE_INTERVAL = 5
-METADATA_EMPTY_THRESHOLD = 3 # number of consecutive empty metadata responses before using fallback
+METADATA_EMPTY_THRESHOLD = 3  # number of consecutive empty metadata responses before using fallback
 IMAGE_DEFINITION = 720
 REQUEST_TIMEOUT = 10  # seconds
 STATION_LOGO_RETRY_INTERVAL = 300  # seconds
@@ -34,6 +35,17 @@ AUDIO_BITRATE = 128000
 ICECAST_URL = "http://arn-instore.streamguys1.com/wwr_007"
 UDP_HOST = "127.0.0.1"
 UDP_PORT = 1234
+
+logger = logging.getLogger("tvh-radio")
+
+def configure_logging():
+    """Configure application logging for console/systemd output."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
 
 def load_config(config_file):
     try:
@@ -170,7 +182,7 @@ def get_station_logo():
             ).convert("RGBA")
 
             if station_logo_source != "primary":
-                print("Primary station logo restored.")
+                logger.info("Primary station logo fetched successfully.")
 
             station_logo_source = "primary"
             station_logo_retry_time = 0
@@ -178,10 +190,10 @@ def get_station_logo():
             return station_logo
 
         except requests.RequestException as error:
-            print(f"Error fetching station logo: {error}")
+            logger.warning(f"Error fetching station logo: {error}")
 
         except Exception as error:
-            print(f"Error processing station logo: {error}")
+            logger.warning(f"Error processing station logo: {error}")
 
     else:
         local_path = resolve_local_path(STATION_LOGO)
@@ -194,10 +206,10 @@ def get_station_logo():
             return station_logo
 
         except FileNotFoundError:
-            print(f"Station logo file not found: {local_path}")
+            logger.warning(f"Station logo file not found: {local_path}")
 
         except Exception as error:
-            print(f"Error processing local station logo: {error}")
+            logger.warning(f"Error processing local station logo: {error}")
 
     fallback_logo_path = resolve_local_path(FALLBACK_STATION_LOGO)
 
@@ -209,10 +221,10 @@ def get_station_logo():
         return station_logo
 
     except FileNotFoundError:
-        print(f"Fallback station logo file not found: {fallback_logo_path}")
+        logger.warning(f"Fallback station logo file not found: {fallback_logo_path}")
 
     except Exception as error:
-        print(f"Error processing fallback station logo: {error}")
+        logger.warning(f"Error processing fallback station logo: {error}")
 
     generic_logo_path = (
         Path(__file__).resolve().parent / "images" / "station_logo.png"
@@ -226,7 +238,7 @@ def get_station_logo():
         return station_logo
 
     except Exception as error:
-        print(f"Error processing generic station logo: {error}")
+        logger.error(f"Error processing generic station logo: {error}")
 
     return None
 
@@ -243,12 +255,10 @@ def get_track_metadata():
         return response.json(), "success"
 
     except requests.RequestException as error:
-        print(f"Error fetching track metadata: {error}")
-        return None, "error"
+        return error, "error"
 
     except ValueError as error:
-        print(f"Error parsing track metadata JSON: {error}")
-        return None, "error"
+        return error, "error"
 
 
 def get_album_artwork(image_path):
@@ -263,9 +273,9 @@ def get_album_artwork(image_path):
                 BytesIO(response.content)
             ).convert("RGB")
         except requests.RequestException as error:
-            print(f"Error fetching album artwork: {error}")
+            logger.error(f"Error fetching album artwork: {error}")
         except Exception as error:
-            print(f"Error processing album artwork: {error}")
+            logger.error(f"Error processing album artwork: {error}")
 
     else:
         local_path = resolve_local_path(image_path)
@@ -273,9 +283,9 @@ def get_album_artwork(image_path):
         try:
             return Image.open(local_path).convert("RGB")
         except FileNotFoundError:
-            print(f"Album artwork file not found: {local_path}")
+            logger.warning(f"Album artwork file not found: {local_path}")
         except Exception as error:
-            print(f"Error processing local album artwork: {error}")
+            logger.warning(f"Error processing local album artwork: {error}")
 
     generic_artwork_path = (
         Path(__file__).resolve().parent / "images" / "album_cover.png"
@@ -284,7 +294,7 @@ def get_album_artwork(image_path):
     try:
         return Image.open(generic_artwork_path).convert("RGB")
     except Exception as error:
-        print(f"Error processing generic album artwork: {error}")
+        logger.error(f"Error processing generic album artwork: {error}")
 
     return None
 
@@ -366,8 +376,9 @@ def run_image_worker(stop_event):
     previous_track = None
     metadata_empty_count = 0
     fallback_active = False
+    metadata_error_active = False
 
-    print(
+    logger.info(
         f"Now playing image generator started. - "
         f"Update interval: {UPDATE_INTERVAL} seconds"
     )
@@ -379,11 +390,15 @@ def run_image_worker(stop_event):
             if result == "success":
                 metadata_empty_count = 0
 
+                if metadata_error_active:
+                    logger.info("Metadata API recovered.")
+                    metadata_error_active = False
+
                 track_identity = get_track_identity(data)
 
                 if track_identity != previous_track:
-                    print("Track metadata changed. Generating new image.")
-                    print(f"Track: {data.get('title')} - {data.get('artist')} - {data.get('album')}")
+                    logger.info("Track metadata changed. Generating new image.")
+                    logger.info(f"Track: {data.get('title')} - {data.get('artist')} - {data.get('album')}")
 
                     image = generate_image(data)
                     jpeg_data = encode_image(image)
@@ -394,7 +409,7 @@ def run_image_worker(stop_event):
                     previous_track = track_identity
                     fallback_active = False
 
-                    print(
+                    logger.info(
                         f"Image generated and stored in memory. "
                         f"Size: {len(jpeg_data)} bytes"
                     )
@@ -403,7 +418,7 @@ def run_image_worker(stop_event):
                 if not fallback_active:
                     metadata_empty_count += 1
 
-                    print(
+                    logger.warning(
                         f"Metadata API returned HTTP 204 "
                         f"({metadata_empty_count}/{METADATA_EMPTY_THRESHOLD})"
                     )
@@ -419,10 +434,7 @@ def run_image_worker(stop_event):
                         fallback_identity = get_track_identity(fallback_data)
 
                         if fallback_identity != previous_track:
-                            print(
-                                "Metadata unavailable. "
-                                "Generating fallback image."
-                            )
+                            logger.warning("Metadata unavailable. Generating fallback image.")
 
                             image = generate_image(fallback_data)
                             jpeg_data = encode_image(image)
@@ -432,7 +444,7 @@ def run_image_worker(stop_event):
 
                             previous_track = fallback_identity
 
-                            print(
+                            logger.info(
                                 f"Fallback image generated and stored in memory. "
                                 f"Size: {len(jpeg_data)} bytes"
                             )
@@ -441,6 +453,10 @@ def run_image_worker(stop_event):
 
             else:
                 metadata_empty_count = 0
+
+                if not metadata_error_active:
+                    logger.error(f"Metadata API unavailable. {data}")
+                    metadata_error_active = True
 
                 fallback_data = {
                     "title": fallback_metadata["title"],
@@ -452,10 +468,7 @@ def run_image_worker(stop_event):
                 fallback_identity = get_track_identity(fallback_data)
 
                 if fallback_identity != previous_track:
-                    print(
-                        "Metadata API unavailable. "
-                        "Generating fallback image."
-                    )
+                    logger.warning("Generating fallback image.")
 
                     image = generate_image(fallback_data)
                     jpeg_data = encode_image(image)
@@ -465,7 +478,7 @@ def run_image_worker(stop_event):
 
                     previous_track = fallback_identity
 
-                    print(
+                    logger.info(
                         f"Fallback image generated and stored in memory. "
                         f"Size: {len(jpeg_data)} bytes"
                     )
@@ -473,11 +486,11 @@ def run_image_worker(stop_event):
                 fallback_active = True
 
         except Exception as error:
-            print(f"Error generating image: {error}")
+            logger.error(f"Error generating image: {error}")
 
         stop_event.wait(UPDATE_INTERVAL)
 
-    print("Now playing image generator stopped.")
+    logger.info("Now playing image generator stopped.")
 
 
 # ------------------------------------------------------------------------------
@@ -494,14 +507,14 @@ def push_frame():
 
     buffer = Gst.Buffer.new_allocate(None, len(image_data), None)
     if buffer is None:
-        print("Unable to allocate GStreamer buffer")
+        logger.error("Unable to allocate GStreamer buffer")
         return False
 
     buffer.fill(0, image_data)
     result = appsrc.emit("push-buffer", buffer)
 
     if result != Gst.FlowReturn.OK:
-        print(f"Error pushing video frame: {result}")
+        logger.error(f"Error pushing video frame: {result}")
         return False
 
     return True
@@ -622,22 +635,22 @@ def on_audio_pad_added(decodebin, pad, audioconvert):
 
     caps = pad.get_current_caps() or pad.query_caps(None)
     media_type = caps.get_structure(0).get_name()
-    print(f"New Icecast stream pad: {media_type}")
+    logger.info(f"New Icecast stream pad: {media_type}")
 
     if media_type.startswith("audio/"):
         sink_pad = audioconvert.get_static_pad("sink")
         if sink_pad.is_linked():
-            print("Audio pad already linked")
+            logger.debug("Audio pad already linked")
             return
 
         result = pad.link(sink_pad)
         if result != Gst.PadLinkReturn.OK:
-            print(f"Unable to link Icecast audio: {result}")
+            logger.error(f"Unable to link Icecast audio: {result}")
         else:
-            print("Icecast audio linked successfully.")
+            logger.info("Icecast audio linked successfully.")
 
             if audio_failed:
-                print("Icecast audio connection restored.")
+                logger.info("Icecast audio connection restored.")
 
             audio_failed = False
             audio_reconnecting = False
@@ -649,13 +662,13 @@ def reconnect_audio_source():
     global audio_reconnecting
     global reconnect_source_id
 
-    print("Attempting to reconnect Icecast audio source...")
+    logger.info("Attempting to reconnect Icecast audio source...")
     audio_reconnecting = True
 
     old_source = icecast_source
 
     if old_source is not None:
-        print("Removing failed Icecast source...")
+        logger.info("Removing failed Icecast source...")
 
         old_source.set_state(Gst.State.NULL)
         pipeline.remove(old_source)
@@ -666,8 +679,10 @@ def reconnect_audio_source():
     )
 
     if new_source is None:
-        print("Unable to create new Icecast source.")
-        return True
+        logger.error("Unable to create new Icecast source.")
+        audio_reconnecting = False
+        reconnect_source_id = None
+        return False
 
     new_source.set_property("uri", ICECAST_URL)
     new_source.connect(
@@ -682,7 +697,7 @@ def reconnect_audio_source():
 
     new_source.sync_state_with_parent()
 
-    print("New Icecast source started.")
+    logger.info("New Icecast source started.")
 
     audio_reconnecting = False
 
@@ -704,10 +719,10 @@ def on_message(bus, message):
         source = message.src
         source_name = source.get_name() if source is not None else "unknown"
 
-        print(f"GStreamer error from {source_name}: {error}")
+        logger.error(f"GStreamer error from {source_name}: {error}")
 
         if debug:
-            print(f"Debug information: {debug}")
+            logger.debug(f"Debug information: {debug}")
 
         icecast_source_element = pipeline.get_by_name("icecast-source")
         is_audio_source_error = False
@@ -724,7 +739,7 @@ def on_message(bus, message):
 
         if is_audio_source_error:
             if not audio_failed:
-                print(
+                logger.warning(
                     "Icecast audio source failed. "
                     "Video will continue running."
                 )
@@ -732,7 +747,7 @@ def on_message(bus, message):
             audio_failed = True
 
             if reconnect_source_id is None and not audio_reconnecting:
-                print("Scheduling Icecast audio reconnect in 5 seconds.")
+                logger.info("Scheduling Icecast audio reconnect in 5 seconds.")
 
                 reconnect_source_id = GLib.timeout_add_seconds(
                     5,
@@ -745,7 +760,7 @@ def on_message(bus, message):
         source = message.src
         source_name = source.get_name() if source is not None else "unknown"
 
-        print(f"GStreamer reached end of stream from {source_name}")
+        logger.info(f"GStreamer reached end of stream from {source_name}")
 
         icecast_source_element = pipeline.get_by_name("icecast-source")
         is_audio_source_eos = False
@@ -762,7 +777,7 @@ def on_message(bus, message):
 
         if is_audio_source_eos:
             if not audio_failed:
-                print(
+                logger.warning(
                     "Icecast audio source reached end of stream. "
                     "Video will continue running."
                 )
@@ -770,7 +785,7 @@ def on_message(bus, message):
             audio_failed = True
 
             if reconnect_source_id is None and not audio_reconnecting:
-                print("Scheduling Icecast audio reconnect in 5 seconds.")
+                logger.info("Scheduling Icecast audio reconnect in 5 seconds.")
 
                 reconnect_source_id = GLib.timeout_add_seconds(
                     5,
@@ -781,10 +796,10 @@ def on_message(bus, message):
 
     elif message_type == Gst.MessageType.WARNING:
         warning, debug = message.parse_warning()
-        print(f"GStreamer warning: {warning}")
+        logger.warning(f"GStreamer warning: {warning}")
 
         if debug:
-            print(f"Debug information: {debug}")
+            logger.debug(f"Debug information: {debug}")
 
     return True
 
@@ -796,7 +811,7 @@ def on_message(bus, message):
 def handle_shutdown_signal(signum, frame):
     """Request a clean shutdown when the process receives a termination signal."""
     signal_name = signal.Signals(signum).name
-    print(f"Received {signal_name}. Shutting down streamer...")
+    logger.info(f"Received {signal_name}. Shutting down streamer...")
 
     if main_loop is not None:
         main_loop.quit()
@@ -820,6 +835,8 @@ def main():
         print("Usage: python3 streamer.py <config-file>")
         sys.exit(1)
 
+    configure_logging()
+
     config_file = Path(sys.argv[1])
     config = load_config(config_file)
     config_directory = config_file.resolve().parent
@@ -834,14 +851,14 @@ def main():
     UDP_PORT = config["udp_port"]
     fallback_metadata = config["fallback_metadata"]
 
-    print("Starting video/audio streamer")
-    print(f"Configuration: {config_file}")
-    print(f"Channel:       {CHANNEL_NAME}")
-    print(f"Station:       {STATION_NAME}")
-    print(f"Resolution:    {VIDEO_WIDTH}x{VIDEO_HEIGHT}")
-    print(f"Frame rate:    {VIDEO_FPS} fps")
-    print(f"Icecast:       {ICECAST_URL}")
-    print(f"UDP Output:    {UDP_HOST}:{UDP_PORT}")
+    logger.info("Starting video/audio streamer")
+    logger.info(f"Configuration: {config_file}")
+    logger.info(f"Channel:       {CHANNEL_NAME}")
+    logger.info(f"Station:       {STATION_NAME}")
+    logger.info(f"Resolution:    {VIDEO_WIDTH}x{VIDEO_HEIGHT}")
+    logger.info(f"Frame rate:    {VIDEO_FPS} fps")
+    logger.info(f"Icecast:       {ICECAST_URL}")
+    logger.info(f"UDP Output:    {UDP_HOST}:{UDP_PORT}")
 
     stop_event = threading.Event()
     image_worker = threading.Thread(
@@ -870,7 +887,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        print("Stopping streamer...")
+        logger.info("Stopping streamer...")
         stop_event.set()
 
         if source_id is not None:
@@ -887,12 +904,12 @@ def main():
 
         # A request may still be within REQUEST_TIMEOUT, so wait for it to finish.
         image_worker.join()
-        print("Streamer stopped.")
+        logger.info("Streamer stopped.")
 
 
 if __name__ == "__main__":
     try:
         main()
     except RuntimeError as error:
-        print(f"Runtime error: {error}")
+        logger.error(f"Runtime error: {error}")
         sys.exit(1)
