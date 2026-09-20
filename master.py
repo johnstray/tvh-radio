@@ -8,6 +8,11 @@ import time
 from pathlib import Path
 
 
+RESTART_LIMIT = 3  # count
+RESTART_WINDOW = 60  # seconds
+RESTART_RESET_TIME = 300  # seconds
+
+
 logger = logging.getLogger("tvh-radio.master")
 processes = {}
 
@@ -100,6 +105,42 @@ def start_channel(config_file):
     )
 
 
+def is_restart_loop(channel):
+    """Return True if a channel is restarting too frequently."""
+    if channel["last_restart"] is None:
+        return False
+
+    elapsed = time.monotonic() - channel["last_restart"]
+
+    return (
+        channel["restart_count"] >= RESTART_LIMIT
+        and elapsed <= RESTART_WINDOW
+    )
+
+
+def restart_channel(config_file, channel_name, channel):
+    """Restart a channel process."""
+    channel["restart_count"] += 1
+    channel["last_restart"] = time.monotonic()
+
+    logger.warning(f"Restarting channel '{channel_name}'.")
+
+    process = start_channel(config_file)
+
+    logger.info(
+        f"Channel '{channel_name}' restarted with PID {process.pid}."
+    )
+
+    output_thread = threading.Thread(
+        target=read_channel_output,
+        args=(process, channel_name),
+        daemon=True,
+    )
+    output_thread.start()
+
+    return process
+
+
 def read_channel_output(process, channel_name):
     """Read and log output from a channel process."""
     for line in process.stdout:
@@ -121,7 +162,13 @@ def start_channels(channels):
             f"Channel '{channel_name}' started with PID {process.pid}."
         )
 
-        processes[channel_name] = process
+        processes[channel_name] = {
+            "config_file": config_file,
+            "process": process,
+            "stopping": False,
+            "restart_count": 0,
+            "last_restart": None
+        }
 
         output_thread = threading.Thread(
             target=read_channel_output,
@@ -138,12 +185,53 @@ def monitor_channels(processes):
     while processes:
         exited_channels = []
 
-        for channel_name, process in processes.items():
+        for channel_name, channel in processes.items():
+            process = channel["process"]
+
+            if (
+                channel["last_restart"] is not None
+                and time.monotonic() - channel["last_restart"] >= RESTART_RESET_TIME
+            ):
+                logger.info(
+                    f"Channel '{channel_name}' has been healthy for "
+                    f"{RESTART_RESET_TIME} seconds. Resetting restart history."
+                )
+                channel["restart_count"] = 0
+                channel["last_restart"] = None
+
             if process.poll() is not None:
+                exit_code = process.returncode
+
+                if channel["stopping"]:
+                    logger.info(
+                        f"Channel '{channel_name}' stopped intentionally."
+                    )
+                    exited_channels.append(channel_name)
+                    continue
+
                 logger.warning(
                     f"Channel '{channel_name}' has exited "
-                    f"with code {process.returncode}."
+                    f"with code {exit_code}."
                 )
+
+                if exit_code != 0:
+                    if is_restart_loop(channel):
+                        logger.error(
+                            f"Channel '{channel_name}' is restarting too frequently. "
+                            f"Not restarting it again."
+                        )
+                        exited_channels.append(channel_name)
+                        continue
+
+                    config_file = channel["config_file"]
+                    new_process = restart_channel(
+                        config_file,
+                        channel_name,
+                        channel
+                    )
+
+                    channel["process"] = new_process
+                    continue
 
                 exited_channels.append(channel_name)
 
@@ -155,8 +243,12 @@ def monitor_channels(processes):
 
 def shutdown_channels(processes):
     """Request a graceful shutdown of all running channels."""
-    for channel_name, process in processes.items():
+    for channel_name, channel in processes.items():
+        process = channel["process"]
+
         logger.info(f"Stopping channel '{channel_name}'.")
+
+        channel["stopping"] = True
         process.terminate()
 
 
