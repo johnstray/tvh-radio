@@ -215,10 +215,11 @@ def restart_channel(channel):
 
     logger.warning(f"Restarting channel '{channel['channel_name']}'.")
 
-    process = start_channel(channel)
+    start_channel(channel)
 
     logger.info(
-        f"Channel '{channel['channel_name']}' restarted with PID {process.pid}."
+        f"Channel '{channel['channel_name']}' restarted with PID "
+        f"{channel['process'].pid}."
     )
 
 
@@ -253,7 +254,7 @@ def start_channels(channels):
 
         logger.info(f"Starting channel: {channel_name}")
 
-        process = start_channel(channel_state)
+        start_channel(channel_state)
 
         logger.info(
             f"Channel '{channel_name}' started with PID {channel_state['process'].pid}."
