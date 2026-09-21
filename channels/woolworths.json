@@ -7,6 +7,8 @@
     "icecast_url": "http://arn-instore.streamguys1.com/wwr_007",
     "udp_host": "127.0.0.1",
     "udp_port": 1234,
+    "channel_number": 909,
+    "tvh_tags": ["Radio", "Music", "iHeartRadio"],
     "fallback_metadata": {
         "title": "Woolworths Radio",
         "artist": "Clear Channel Australia",
