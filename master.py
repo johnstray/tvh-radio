@@ -270,7 +270,10 @@ def monitor_channels(processes):
                     logger.info(
                         f"Channel '{channel['channel_name']}' stopped intentionally."
                     )
-                    channels_to_remove.append(channel["channel_name"])
+
+                    if not shutdown_requested:
+                        channels_to_remove.append(channel["channel_name"])
+
                     continue
 
                 logger.warning(
@@ -310,6 +313,22 @@ def shutdown_channels(processes):
 
         channel["stopping"] = True
         channel["process"].terminate()
+
+
+def wait_for_channels(processes):
+    """Wait for all channel processes to exit."""
+    for channel in processes.values():
+        process = channel["process"]
+
+        logger.info(
+            f"Waiting for channel '{channel['channel_name']}' to stop."
+        )
+
+        process.wait()
+
+        logger.info(
+            f"Channel '{channel['channel_name']}' stopped."
+        )
 
 
 # ------------------------------------------------------------------------------
@@ -364,6 +383,16 @@ def write_playlist(playlist, master_config):
         file.write(playlist)
 
 
+def remove_playlist(master_config):
+    """Remove the generated playlist file."""
+    output_file = master_config["playlist"]["output"]
+
+    try:
+        Path(output_file).unlink()
+    except FileNotFoundError:
+        pass
+
+
 # ------------------------------------------------------------------------------
 # Main Execution
 # ------------------------------------------------------------------------------
@@ -401,5 +430,7 @@ if __name__ == "__main__":
     write_playlist(playlist, master_config)
 
     processes.update(start_channels(channels))
-
     monitor_channels(processes)
+
+    wait_for_channels(processes)
+    remove_playlist(master_config)
