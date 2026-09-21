@@ -27,6 +27,37 @@ def configure_logging():
 
 
 # ------------------------------------------------------------------------------
+# Master Configuration Management
+# ------------------------------------------------------------------------------
+
+def load_master_config(config_file):
+    """Load the master configuration from a JSON file."""
+    with open(config_file, "r", encoding="utf-8") as file:
+        return json.load(file)
+
+
+def validate_master_config(config):
+    """Validate the required master configuration values."""
+    if "playlist" not in config:
+        raise ValueError(
+            "Missing required configuration section: playlist"
+        )
+
+    playlist_config = config["playlist"]
+
+    required_keys = [
+        "output",
+        "starting_channel_number",
+    ]
+
+    for key in required_keys:
+        if key not in playlist_config:
+            raise ValueError(
+                f"Missing required playlist configuration value: {key}"
+            )
+
+
+# ------------------------------------------------------------------------------
 # Channel Configuration Management
 # ------------------------------------------------------------------------------
 
@@ -281,7 +312,16 @@ if __name__ == "__main__":
 
     logger.info("tvh-radio master starting.")
 
-    channels = load_channel_configs("channels")
+    try:
+        master_config = load_master_config("config.json")
+        validate_master_config(master_config)
+
+        channels = load_channel_configs("channels")
+
+    except (OSError, json.JSONDecodeError, ValueError) as error:
+        logger.error(f"Configuration error: {error}")
+        sys.exit(1)
+
     processes.update(start_channels(channels))
 
     monitor_channels(processes)
