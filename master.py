@@ -104,9 +104,24 @@ def validate_channel_config(config):
 
     for key in fallback_keys:
         if key not in config["fallback_metadata"]:
-            raise ValueError(
-                f"Missing required fallback metadata value: {key}"
-            )
+            raise ValueError(f"Missing required fallback metadata value: {key}")
+
+    if "channel_number" in config:
+        if (
+            not isinstance(config["channel_number"], int)
+            or isinstance(config["channel_number"], bool)
+        ):
+            raise ValueError("channel_number must be an integer")
+
+        if config["channel_number"] < 1:
+            raise ValueError("channel_number must be greater than 0")
+
+    if "tvh_tags" in config:
+        if not isinstance(config["tvh_tags"], list):
+            raise ValueError("tvh_tags must be a list")
+
+        if not all(isinstance(tag, str) for tag in config["tvh_tags"]):
+            raise ValueError("tvh_tags must contain only strings")
 
 
 def load_channel_configs(config_directory):
@@ -120,6 +135,28 @@ def load_channel_configs(config_directory):
         channels.append((config_file, config))
 
     return channels
+
+
+def validate_channel_numbers(channels):
+    """Validate that configured channel numbers are unique."""
+    channel_numbers = {}
+
+    for config_file, channel in channels:
+        if "channel_number" not in channel:
+            continue
+
+        channel_number = channel["channel_number"]
+
+        if channel_number in channel_numbers:
+            previous_channel = channel_numbers[channel_number]
+
+            raise ValueError(
+                f"Duplicate channel number {channel_number} "
+                f"configured for '{previous_channel}' and "
+                f"'{channel['channel_name']}'"
+            )
+
+        channel_numbers[channel_number] = channel["channel_name"]
 
 
 # ------------------------------------------------------------------------------
@@ -340,6 +377,12 @@ def generate_playlist(channels, master_config):
     playlist_config = master_config["playlist"]
     next_channel_number = playlist_config["starting_channel_number"]
 
+    explicit_channel_numbers = {
+        channel["channel_number"]
+        for config_file, channel in channels
+        if "channel_number" in channel
+    }
+
     playlist_lines = [
         "#EXTM3U"
     ]
@@ -348,6 +391,9 @@ def generate_playlist(channels, master_config):
         if "channel_number" in channel:
             channel_number = channel["channel_number"]
         else:
+            while next_channel_number in explicit_channel_numbers:
+                next_channel_number += 1
+                
             channel_number = next_channel_number
             next_channel_number += 1
 
@@ -421,6 +467,7 @@ if __name__ == "__main__":
         validate_master_config(master_config)
 
         channels = load_channel_configs("channels")
+        validate_channel_numbers(channels)
 
     except (OSError, json.JSONDecodeError, ValueError) as error:
         logger.error(f"Configuration error: {error}")
