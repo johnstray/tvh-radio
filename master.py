@@ -281,7 +281,7 @@ if __name__ == "__main__":
 
     logger.info("tvh-radio master starting.")
 
-    channels = load_channel_configs("config")
+    channels = load_channel_configs("channels")
     processes.update(start_channels(channels))
 
     monitor_channels(processes)
