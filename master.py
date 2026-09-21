@@ -313,6 +313,58 @@ def shutdown_channels(processes):
 
 
 # ------------------------------------------------------------------------------
+# Playlist Generation
+# ------------------------------------------------------------------------------
+
+def generate_playlist(channels, master_config):
+    """Generate an M3U8 playlist from the configured channels."""
+    playlist_config = master_config["playlist"]
+    next_channel_number = playlist_config["starting_channel_number"]
+
+    playlist_lines = [
+        "#EXTM3U"
+    ]
+
+    for config_file, channel in channels:
+        if "channel_number" in channel:
+            channel_number = channel["channel_number"]
+        else:
+            channel_number = next_channel_number
+            next_channel_number += 1
+
+        tvh_tags = channel.get("tvh_tags", [])
+        tvh_tags_value = ",".join(tvh_tags)
+
+        if tvh_tags_value:
+            tvh_tags_attribute = f' tvh-tags="{tvh_tags_value}"'
+        else:
+            tvh_tags_attribute = ""
+
+        playlist_lines.append(
+            f'#EXTINF:-1 tvg-name="{channel["station_name"]}" '
+            f'tvg-id="{channel["channel_name"]}" '
+            f'tvg-logo="{channel["station_logo"]}" '
+            f'tvg-chno="{channel_number}"'
+            f'{tvh_tags_attribute},'
+            f'{channel["station_name"]}'
+        )
+
+        playlist_lines.append(
+            f'udp://{channel["udp_host"]}:{channel["udp_port"]}'
+        )
+
+    return "\n".join(playlist_lines) + "\n"
+
+
+def write_playlist(playlist, master_config):
+    """Write the generated playlist to the configured output file."""
+    output_file = master_config["playlist"]["output"]
+
+    with open(output_file, "w", encoding="utf-8") as file:
+        file.write(playlist)
+
+
+# ------------------------------------------------------------------------------
 # Main Execution
 # ------------------------------------------------------------------------------
 
@@ -344,6 +396,9 @@ if __name__ == "__main__":
     except (OSError, json.JSONDecodeError, ValueError) as error:
         logger.error(f"Configuration error: {error}")
         sys.exit(1)
+
+    playlist = generate_playlist(channels, master_config)
+    write_playlist(playlist, master_config)
 
     processes.update(start_channels(channels))
 

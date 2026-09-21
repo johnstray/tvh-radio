@@ -1,6 +1,6 @@
 {
     "playlist": {
-        "output": "",
+        "output": "playlist.m3u8",
         "starting_channel_number": 100
     }
 }
