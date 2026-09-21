@@ -256,7 +256,7 @@ def start_channels(channels):
         process = start_channel(channel_state)
 
         logger.info(
-            f"Channel '{channel_name}' started with PID {channel_state['process']}."
+            f"Channel '{channel_name}' started with PID {channel_state['process'].pid}."
         )
 
         processes[channel_name] = channel_state
@@ -393,7 +393,7 @@ def generate_playlist(channels, master_config):
         else:
             while next_channel_number in explicit_channel_numbers:
                 next_channel_number += 1
-                
+
             channel_number = next_channel_number
             next_channel_number += 1
 
