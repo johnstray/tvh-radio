@@ -14,5 +14,15 @@
         "artist": "Clear Channel Digital",
         "album": "iHeartRadio",
         "image_path": "../images/album_cover.png"
+    },
+    "stream": {
+        "update_interval": 5,
+        "metadata_empty_threshold": 3,
+        "image_definition": 720,
+        "request_timeout": 10,
+        "station_logo_retry_interval": 300,
+        "video_fps": 25,
+        "video_bitrate": 2500,
+        "audio_bitrate": 128000
     }
 }

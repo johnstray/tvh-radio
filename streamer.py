@@ -16,26 +16,6 @@ gi.require_version("GstApp", "1.0")
 
 from gi.repository import GLib, Gst, GstApp
 
-
-# ------------------------------------------------------------------------------
-# CONFIGURATION
-# ------------------------------------------------------------------------------
-
-UPDATE_INTERVAL = 5
-METADATA_EMPTY_THRESHOLD = 3  # number of consecutive empty metadata responses before using fallback
-IMAGE_DEFINITION = 720
-REQUEST_TIMEOUT = 10  # seconds
-STATION_LOGO_RETRY_INTERVAL = 300  # seconds
-
-VIDEO_WIDTH = 1280
-VIDEO_HEIGHT = 720
-VIDEO_FPS = 25
-VIDEO_BITRATE = 2500
-AUDIO_BITRATE = 128000
-ICECAST_URL = "http://arn-instore.streamguys1.com/wwr_007"
-UDP_HOST = "127.0.0.1"
-UDP_PORT = 1234
-
 logger = logging.getLogger("tvh-radio")
 
 def configure_logging(channel_name):
@@ -46,6 +26,10 @@ def configure_logging(channel_name):
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
+
+# ------------------------------------------------------------------------------
+# CONFIGURATION
+# ------------------------------------------------------------------------------
 
 def load_config(config_file):
     try:
@@ -65,7 +49,8 @@ def load_config(config_file):
         "icecast_url",
         "udp_host",
         "udp_port",
-        "fallback_metadata"
+        "fallback_metadata",
+        "stream"
     ]
 
     for key in required_keys:
@@ -87,6 +72,35 @@ def load_config(config_file):
                 f"Missing required fallback metadata value: {key}"
             )
 
+    stream_keys = [
+        "update_interval",
+        "metadata_empty_threshold",
+        "image_definition",
+        "request_timeout",
+        "station_logo_retry_interval",
+        "video_fps",
+        "video_bitrate",
+        "audio_bitrate",
+    ]
+
+    for key in stream_keys:
+        if key not in config["stream"]:
+            raise RuntimeError(
+                f"Missing required stream configuration value: {key}"
+            )
+
+        value = config["stream"][key]
+
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise RuntimeError(
+                f"stream {key} must be an integer"
+            )
+
+        if value < 1:
+            raise RuntimeError(
+                f"stream {key} must be greater than 0"
+            )
+
     return config
 
 # Base definitions for image dimensions based on a 16:9 aspect ratio.
@@ -94,7 +108,7 @@ BASE_DEFINITION = 720
 ART_SIZE_BASE = 150
 FONT_SIZE_TITLE_BASE = 36
 FONT_SIZE_SUB_BASE = 20
-SCALE = IMAGE_DEFINITION / BASE_DEFINITION
+SCALE = 1
 
 
 # ------------------------------------------------------------------------------
@@ -104,18 +118,23 @@ SCALE = IMAGE_DEFINITION / BASE_DEFINITION
 FONT_SIZE_TITLE = int(FONT_SIZE_TITLE_BASE * SCALE)
 FONT_SIZE_SUB = int(FONT_SIZE_SUB_BASE * SCALE)
 
-try:
-    FONT_TITLE = ImageFont.truetype(
-        "/usr/share/fonts/liberation-sans-fonts/LiberationSans-Bold.ttf",
-        FONT_SIZE_TITLE,
-    )
-    FONT_SUB = ImageFont.truetype(
-        "/usr/share/fonts/liberation-sans-fonts/LiberationSans-Regular.ttf",
-        FONT_SIZE_SUB,
-    )
-except IOError:
-    FONT_TITLE = ImageFont.load_default()
-    FONT_SUB = ImageFont.load_default()
+def configure_fonts():
+    """Configure fonts based on the channel image definition."""
+    global FONT_TITLE
+    global FONT_SUB
+
+    try:
+        FONT_TITLE = ImageFont.truetype(
+            "/usr/share/fonts/liberation-sans-fonts/LiberationSans-Bold.ttf",
+            FONT_SIZE_TITLE,
+        )
+        FONT_SUB = ImageFont.truetype(
+            "/usr/share/fonts/liberation-sans-fonts/LiberationSans-Regular.ttf",
+            FONT_SIZE_SUB,
+        )
+    except IOError:
+        FONT_TITLE = ImageFont.load_default()
+        FONT_SUB = ImageFont.load_default()
 
 
 # ------------------------------------------------------------------------------
@@ -133,6 +152,7 @@ station_logo_source = None
 station_logo_retry_time = 0
 fallback_metadata = None
 config_directory = None
+stream_config = None
 
 pipeline = None
 icecast_source = None
@@ -174,7 +194,7 @@ def get_station_logo():
 
     if STATION_LOGO.startswith(("http://", "https://")):
         try:
-            response = requests.get(STATION_LOGO, timeout=REQUEST_TIMEOUT)
+            response = requests.get(STATION_LOGO, timeout=stream_config["request_timeout"])
             response.raise_for_status()
 
             station_logo = Image.open(
@@ -216,7 +236,7 @@ def get_station_logo():
     try:
         station_logo = Image.open(fallback_logo_path).convert("RGBA")
         station_logo_source = "fallback"
-        station_logo_retry_time = now + STATION_LOGO_RETRY_INTERVAL
+        station_logo_retry_time = now + stream_config["station_logo_retry_interval"]
 
         return station_logo
 
@@ -233,7 +253,7 @@ def get_station_logo():
     try:
         station_logo = Image.open(generic_logo_path).convert("RGBA")
         station_logo_source = "generic"
-        station_logo_retry_time = now + STATION_LOGO_RETRY_INTERVAL
+        station_logo_retry_time = now + stream_config["station_logo_retry_interval"]
 
         return station_logo
 
@@ -245,7 +265,7 @@ def get_station_logo():
 
 def get_track_metadata():
     try:
-        response = requests.get(TRACK_META_URL, timeout=REQUEST_TIMEOUT)
+        response = requests.get(TRACK_META_URL, timeout=stream_config["request_timeout"])
 
         if response.status_code == 204:
             return None, "empty"
@@ -267,7 +287,7 @@ def get_album_artwork(image_path):
 
     if image_path.startswith(("http://", "https://")):
         try:
-            response = requests.get(image_path, timeout=REQUEST_TIMEOUT)
+            response = requests.get(image_path, timeout=stream_config["request_timeout"])
             response.raise_for_status()
             return Image.open(
                 BytesIO(response.content)
@@ -303,8 +323,9 @@ def get_track_identity(data):
     return f"{data.get('title', '')}-{data.get('artist', '')}-{data.get('album', '')}-{data.get('imagePath', '')}"
 
 def generate_image(data):
-    img_width = IMAGE_DEFINITION * 16 // 9
-    img_height = IMAGE_DEFINITION
+    image_definition = stream_config["image_definition"]
+    img_width = image_definition * 16 // 9
+    img_height = image_definition
 
     image = Image.new("RGB", (img_width, img_height), color="#18181b")
     draw = ImageDraw.Draw(image)
@@ -380,7 +401,7 @@ def run_image_worker(stop_event):
 
     logger.info(
         f"Now playing image generator started. - "
-        f"Update interval: {UPDATE_INTERVAL} seconds"
+        f"Update interval: {stream_config['update_interval']} seconds"
     )
 
     while not stop_event.is_set():
@@ -420,10 +441,10 @@ def run_image_worker(stop_event):
 
                     logger.warning(
                         f"Metadata API returned HTTP 204 "
-                        f"({metadata_empty_count}/{METADATA_EMPTY_THRESHOLD})"
+                        f"({metadata_empty_count}/{stream_config["metadata_empty_threshold"]})"
                     )
 
-                    if metadata_empty_count >= METADATA_EMPTY_THRESHOLD:
+                    if metadata_empty_count >= stream_config["metadata_empty_threshold"]:
                         fallback_data = {
                             "title": fallback_metadata["title"],
                             "artist": fallback_metadata["artist"],
@@ -488,7 +509,7 @@ def run_image_worker(stop_event):
         except Exception as error:
             logger.error(f"Error generating image: {error}")
 
-        stop_event.wait(UPDATE_INTERVAL)
+        stop_event.wait(stream_config['update_interval'])
 
     logger.info("Now playing image generator stopped.")
 
@@ -529,6 +550,10 @@ def create_pipeline():
     global icecast_source
     global audio_convert
 
+    image_definition = stream_config["image_definition"]
+    video_width = image_definition * 16 // 9
+    video_height = image_definition
+
     pipeline = Gst.Pipeline.new("stream-pipeline")
 
     appsrc = Gst.ElementFactory.make("appsrc", "image-source")
@@ -566,20 +591,20 @@ def create_pipeline():
     appsrc.set_property("block", True)
     appsrc.set_property("do-timestamp", True)
     appsrc.set_property(
-        "caps", Gst.Caps.from_string(f"image/jpeg,framerate={VIDEO_FPS}/1")
+        "caps", Gst.Caps.from_string(f"image/jpeg,framerate={stream_config['video_fps']}/1")
     )
 
     videocaps.set_property(
         "caps",
         Gst.Caps.from_string(
-            f"video/x-raw,width={VIDEO_WIDTH},height={VIDEO_HEIGHT},"
-            f"framerate={VIDEO_FPS}/1"
+            f"video/x-raw,width={video_width},height={video_height},"
+            f"framerate={stream_config['video_fps']}/1"
         ),
     )
     x264enc.set_property("tune", "zerolatency")
     x264enc.set_property("speed-preset", "veryfast")
-    x264enc.set_property("bitrate", VIDEO_BITRATE)
-    x264enc.set_property("key-int-max", VIDEO_FPS)
+    x264enc.set_property("bitrate", stream_config["video_bitrate"],)
+    x264enc.set_property("key-int-max", stream_config['video_fps'],)
     x264enc.set_property("byte-stream", True)
     h264parse.set_property("config-interval", -1)
 
@@ -591,7 +616,7 @@ def create_pipeline():
     audiocaps.set_property(
         "caps", Gst.Caps.from_string("audio/x-raw,rate=48000,channels=2")
     )
-    avenc_aac.set_property("bitrate", AUDIO_BITRATE)
+    avenc_aac.set_property("bitrate", stream_config["audio_bitrate"],)
 
     mpegtsmux.set_property("alignment", 7)
     mpegtsmux.set_property("pat-interval", 9000)
@@ -830,6 +855,7 @@ def main():
     global UDP_PORT
     global fallback_metadata
     global config_directory
+    global stream_config
 
     if len(sys.argv) != 2:
         print("Usage: python3 streamer.py <config-file>")
@@ -850,13 +876,27 @@ def main():
     UDP_HOST = config["udp_host"]
     UDP_PORT = config["udp_port"]
     fallback_metadata = config["fallback_metadata"]
+    stream_config = config["stream"]
+
+    global SCALE
+    global FONT_SIZE_TITLE
+    global FONT_SIZE_SUB
+
+    SCALE = stream_config["image_definition"] / BASE_DEFINITION
+    FONT_SIZE_TITLE = int(FONT_SIZE_TITLE_BASE * SCALE)
+    FONT_SIZE_SUB = int(FONT_SIZE_SUB_BASE * SCALE)
+    configure_fonts()
+
+    image_definition = stream_config["image_definition"]
+    video_width = image_definition * 16 // 9
+    video_height = image_definition
 
     logger.info("Starting video/audio streamer")
     logger.info(f"Configuration: {config_file}")
     logger.info(f"Channel:       {CHANNEL_NAME}")
     logger.info(f"Station:       {STATION_NAME}")
-    logger.info(f"Resolution:    {VIDEO_WIDTH}x{VIDEO_HEIGHT}")
-    logger.info(f"Frame rate:    {VIDEO_FPS} fps")
+    logger.info(f"Resolution:    {video_width}x{video_height}")
+    logger.info(f"Frame rate:    {stream_config['video_fps']} fps")
     logger.info(f"Icecast:       {ICECAST_URL}")
     logger.info(f"UDP Output:    {UDP_HOST}:{UDP_PORT}")
 
@@ -882,7 +922,7 @@ def main():
         signal.signal(signal.SIGINT, handle_shutdown_signal)
         signal.signal(signal.SIGTERM, handle_shutdown_signal)
         pipeline.set_state(Gst.State.PLAYING)
-        source_id = GLib.timeout_add(int(1000 / VIDEO_FPS), push_frame)
+        source_id = GLib.timeout_add(int(1000 / stream_config['video_fps']), push_frame)
         main_loop.run()
     except KeyboardInterrupt:
         pass
@@ -902,7 +942,7 @@ def main():
         if pipeline is not None:
             pipeline.set_state(Gst.State.NULL)
 
-        # A request may still be within REQUEST_TIMEOUT, so wait for it to finish.
+        # A request may still be within the configured timeout, so wait for it to finish.
         image_worker.join()
         logger.info("Streamer stopped.")
 
