@@ -1,0 +1,23 @@
+[Unit]
+Description=TVHeadend Radio - Master Process
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=YOUR_USER
+Group=YOUR_GROUP
+WorkingDirectory=/opt/tvh-radio
+ExecStart=/opt/tvh-radio/.venv/bin/python master.py
+
+Restart=on-failure
+RestartSec=10
+
+KillSignal=SIGTERM
+KillMode=control-group
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
