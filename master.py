@@ -112,6 +112,28 @@ def validate_master_config(config):
                 f"restart {key} must be greater than 0"
             )
 
+    udp_config = config.get("udp")
+
+    if not isinstance(udp_config, dict):
+        raise ValueError("Master config 'udp' section is required")
+
+    for key in ("port_start", "port_end"):
+        value = udp_config.get(key)
+
+        if (
+            not isinstance(value, int)
+            or isinstance(value, bool)
+            or not 1 <= value <= 65535
+        ):
+            raise ValueError(
+                f"Master config 'udp.{key}' must be an integer between 1 and 65535"
+            )
+
+    if udp_config["port_start"] > udp_config["port_end"]:
+        raise ValueError(
+            "Master config 'udp.port_start' must not be greater than 'udp.port_end'"
+        )
+
 
 # ------------------------------------------------------------------------------
 # Channel Configuration Management
@@ -140,7 +162,6 @@ def validate_channel_config(config):
         "track_meta_url",
         "icecast_url",
         "udp_host",
-        "udp_port",
         "fallback_metadata",
     ]
 
@@ -170,6 +191,16 @@ def validate_channel_config(config):
 
         if config["channel_number"] < 1:
             raise ValueError("channel_number must be greater than 0")
+
+    if "udp_port" in config:
+        if (
+            not isinstance(config["udp_port"], int)
+            or isinstance(config["udp_port"], bool)
+            or not 1 <= config["udp_port"] <= 65535
+        ):
+            raise ValueError(
+                "udp_port must be an integer between 1 and 65535"
+            )
 
     if "tvh_tags" in config:
         if not isinstance(config["tvh_tags"], list):
@@ -212,6 +243,65 @@ def validate_channel_numbers(channels):
             )
 
         channel_numbers[channel_number] = channel["channel_name"]
+
+
+def assign_udp_ports(channels, udp_config):
+    """Assign and persist UDP ports for channels without an explicit port."""
+
+    used_ports = set()
+    assigned_ports = []
+
+    # Reserve explicitly assigned ports first.
+    for config_file, config in channels:
+        if "udp_port" in config:
+            port = config["udp_port"]
+
+            if port in used_ports:
+                raise ValueError(
+                    f"Duplicate UDP port {port} assigned to multiple channels"
+                )
+
+            used_ports.add(port)
+
+    port_start = udp_config["port_start"]
+    port_end = udp_config["port_end"]
+
+    next_port = port_start
+
+    for config_file, config in channels:
+        if "udp_port" in config:
+            continue
+
+        while next_port <= port_end and next_port in used_ports:
+            next_port += 1
+
+        if next_port > port_end:
+            raise ValueError(
+                f"No available UDP ports in configured range "
+                f"{port_start}-{port_end}"
+            )
+
+        config["udp_port"] = next_port
+        used_ports.add(next_port)
+
+        assigned_ports.append((config_file, config))
+
+        next_port += 1
+
+    for config_file, config in assigned_ports:
+        save_channel_config(config_file, config)
+
+
+def save_channel_config(config_file, config):
+    """Write a channel configuration atomically."""
+
+    temp_file = config_file.with_suffix(".json.tmp")
+
+    with temp_file.open("w", encoding="utf-8") as file:
+        json.dump(config, file, indent=4)
+        file.write("\n")
+
+    temp_file.replace(config_file)
 
 
 # ------------------------------------------------------------------------------
@@ -524,6 +614,8 @@ if __name__ == "__main__":
 
         channels = load_channel_configs("channels")
         validate_channel_numbers(channels)
+
+        assign_udp_ports(channels, master_config["udp"],)
 
     except (OSError, json.JSONDecodeError, ValueError) as error:
         logger.error(f"Configuration error: {error}")

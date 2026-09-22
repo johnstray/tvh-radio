@@ -8,5 +8,9 @@
         "window": 60,
         "reset_time": 300,
         "backoff_time": 300
+    },
+    "udp": {
+        "port_start": 1234,
+        "port_end": 1333
     }
 }
