@@ -2,5 +2,11 @@
     "playlist": {
         "output": "playlist.m3u8",
         "starting_channel_number": 908
+    },
+    "restart": {
+        "limit": 3,
+        "window": 60,
+        "reset_time": 300,
+        "backoff_time": 300
     }
 }

@@ -8,12 +8,6 @@ import time
 from pathlib import Path
 
 
-RESTART_LIMIT = 3  # count
-RESTART_WINDOW = 60  # seconds
-RESTART_RESET_TIME = 300  # seconds
-RESTART_BACKOFF_TIME = 300  # seconds
-
-
 logger = logging.getLogger("tvh-radio.master")
 processes = {}
 shutdown_requested = False
@@ -46,6 +40,11 @@ def validate_master_config(config):
 
     playlist_config = config["playlist"]
 
+    if not isinstance(playlist_config, dict):
+        raise ValueError(
+            "playlist configuration must be an object"
+        )
+
     required_keys = [
         "output",
         "starting_channel_number",
@@ -55,6 +54,62 @@ def validate_master_config(config):
         if key not in playlist_config:
             raise ValueError(
                 f"Missing required playlist configuration value: {key}"
+            )
+
+    if not isinstance(playlist_config["output"], str):
+        raise ValueError(
+            "playlist output must be a string"
+        )
+
+    if not playlist_config["output"].strip():
+        raise ValueError(
+            "playlist output must not be empty"
+        )
+
+    if (
+        not isinstance(playlist_config["starting_channel_number"], int)
+        or isinstance(playlist_config["starting_channel_number"], bool)
+    ):
+        raise ValueError(
+            "starting_channel_number must be an integer"
+        )
+
+    if playlist_config["starting_channel_number"] < 1:
+        raise ValueError(
+            "starting_channel_number must be greater than 0"
+        )
+
+    if "restart" not in config:
+        raise ValueError(
+            "Missing required configuration section: restart"
+        )
+
+    restart_config = config["restart"]
+
+    required_restart_keys = [
+        "limit",
+        "window",
+        "reset_time",
+        "backoff_time",
+    ]
+
+    for key in required_restart_keys:
+        if key not in restart_config:
+            raise ValueError(
+                f"Missing required restart configuration value: {key}"
+            )
+
+    for key in required_restart_keys:
+        value = restart_config[key]
+
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise ValueError(
+                f"restart {key} must be an integer"
+            )
+
+        if value < 1:
+            raise ValueError(
+                f"restart {key} must be greater than 0"
             )
 
 
@@ -184,7 +239,7 @@ def start_channel(channel):
     output_thread.start()
 
 
-def is_restart_loop(channel):
+def is_restart_loop(channel, restart_config):
     """Return True if a channel is restarting too frequently."""
     if channel["last_restart"] is None:
         return False
@@ -192,8 +247,8 @@ def is_restart_loop(channel):
     elapsed = time.monotonic() - channel["last_restart"]
 
     return (
-        channel["restart_count"] >= RESTART_LIMIT
-        and elapsed <= RESTART_WINDOW
+        channel["restart_count"] >= restart_config["limit"]
+        and elapsed <= restart_config["window"]
     )
 
 
@@ -265,7 +320,7 @@ def start_channels(channels):
     return processes
 
 
-def monitor_channels(processes):
+def monitor_channels(processes, restart_config):
     """Monitor all running channel processes."""
     while not shutdown_requested:
         channels_to_remove = []
@@ -292,11 +347,11 @@ def monitor_channels(processes):
 
             if (
                 channel["last_restart"] is not None
-                and time.monotonic() - channel["last_restart"] >= RESTART_RESET_TIME
+                and time.monotonic() - channel["last_restart"] >= restart_config["reset_time"]
             ):
                 logger.info(
                     f"Channel '{channel['channel_name']}' has been healthy for "
-                    f"{RESTART_RESET_TIME} seconds. Resetting restart history."
+                    f"{restart_config["reset_time"]} seconds. Resetting restart history."
                 )
                 channel["restart_count"] = 0
                 channel["last_restart"] = None
@@ -320,15 +375,15 @@ def monitor_channels(processes):
                 )
 
                 if exit_code != 0:
-                    if is_restart_loop(channel):
+                    if is_restart_loop(channel, restart_config):
                         channel["state"] = "backoff"
                         channel["next_restart"] = (
-                            time.monotonic() + RESTART_BACKOFF_TIME
+                            time.monotonic() + restart_config["backoff_time"]
                         )
 
                         logger.error(
                             f"Channel '{channel['channel_name']}' is restarting too frequently. "
-                            f"Entering backoff for {RESTART_BACKOFF_TIME} seconds."
+                            f"Entering backoff for {restart_config["backoff_time"]} seconds."
                         )
                         continue
 
@@ -478,7 +533,7 @@ if __name__ == "__main__":
     write_playlist(playlist, master_config)
 
     processes.update(start_channels(channels))
-    monitor_channels(processes)
+    monitor_channels(processes, master_config["restart"])
 
     wait_for_channels(processes)
     remove_playlist(master_config)
