@@ -371,7 +371,7 @@ def restart_channel(channel):
 def read_channel_output(channel):
     """Read and log output from a channel process."""
     for line in channel["process"].stdout:
-        print(line, end="")
+        print(line, end="", flush=True)
 
 
 def create_channel_state(config_file, config):
