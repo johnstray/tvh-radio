@@ -38,11 +38,11 @@ UDP_PORT = 1234
 
 logger = logging.getLogger("tvh-radio")
 
-def configure_logging():
+def configure_logging(channel_name):
     """Configure application logging for console/systemd output."""
     logging.basicConfig(
         level=logging.INFO,
-        format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+        format=f"%(asctime)s %(levelname)-8s %(name)s [{channel_name}]: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
@@ -835,11 +835,11 @@ def main():
         print("Usage: python3 streamer.py <config-file>")
         sys.exit(1)
 
-    configure_logging()
-
     config_file = Path(sys.argv[1])
     config = load_config(config_file)
     config_directory = config_file.resolve().parent
+
+    configure_logging(config["channel_name"])
 
     CHANNEL_NAME = config["channel_name"]
     STATION_NAME = config["station_name"]
