@@ -1,3 +1,4 @@
+import argparse
 import json
 import logging
 import signal
@@ -178,6 +179,11 @@ def validate_channel_config(config):
         "image_path",
     ]
 
+    if not isinstance(config["fallback_metadata"], dict):
+        raise ValueError(
+            "fallback_metadata configuration must be an object"
+        )
+
     for key in fallback_keys:
         if key not in config["fallback_metadata"]:
             raise ValueError(f"Missing required fallback metadata value: {key}")
@@ -209,6 +215,47 @@ def validate_channel_config(config):
         if not all(isinstance(tag, str) for tag in config["tvh_tags"]):
             raise ValueError("tvh_tags must contain only strings")
 
+    if "stream" not in config:
+        raise ValueError(
+            "Missing required configuration section: stream"
+        )
+
+    stream_config = config["stream"]
+
+    if not isinstance(stream_config, dict):
+        raise ValueError(
+            "stream configuration must be an object"
+        )
+
+    stream_keys = [
+        "update_interval",
+        "metadata_empty_threshold",
+        "image_definition",
+        "request_timeout",
+        "station_logo_retry_interval",
+        "video_fps",
+        "video_bitrate",
+        "audio_bitrate",
+    ]
+
+    for key in stream_keys:
+        if key not in stream_config:
+            raise ValueError(
+                f"Missing required stream configuration value: {key}"
+            )
+
+        value = stream_config[key]
+
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise ValueError(
+                f"stream {key} must be an integer"
+            )
+
+        if value < 1:
+            raise ValueError(
+                f"stream {key} must be greater than 0"
+            )
+
 
 def load_channel_configs(config_directory):
     """Find, load, and validate all channel configurations."""
@@ -216,8 +263,14 @@ def load_channel_configs(config_directory):
     channels = []
 
     for config_file in config_files:
-        config = load_channel_config(config_file)
-        validate_channel_config(config)
+        try:
+            config = load_channel_config(config_file)
+            validate_channel_config(config)
+        except (OSError, json.JSONDecodeError, ValueError) as error:
+            raise ValueError(
+                f"{config_file}: {error}"
+            ) from error
+
         channels.append((config_file, config))
 
     return channels
@@ -243,6 +296,57 @@ def validate_channel_numbers(channels):
             )
 
         channel_numbers[channel_number] = channel["channel_name"]
+
+
+def validate_udp_ports(channels, udp_config):
+    """Validate UDP port assignments without modifying configuration files."""
+
+    used_ports = set()
+
+    for config_file, config in channels:
+        if "udp_port" in config:
+            port = config["udp_port"]
+
+            if port in used_ports:
+                raise ValueError(
+                    f"Duplicate UDP port {port} assigned to multiple channels"
+                )
+
+            used_ports.add(port)
+
+    port_start = udp_config["port_start"]
+    port_end = udp_config["port_end"]
+
+    available_ports = [
+        port
+        for port in range(port_start, port_end + 1)
+        if port not in used_ports
+    ]
+
+    missing_ports = sum(
+        1
+        for config_file, config in channels
+        if "udp_port" not in config
+    )
+
+    if missing_ports > len(available_ports):
+        raise ValueError(
+            f"No available UDP ports for {missing_ports} channel(s) "
+            f"in configured range {port_start}-{port_end}"
+        )
+
+
+def validate_configuration(master_config_file, channel_config_directory):
+    """Load and validate the complete configuration without starting channels."""
+
+    master_config = load_master_config(master_config_file)
+    validate_master_config(master_config)
+
+    channels = load_channel_configs(channel_config_directory)
+    validate_channel_numbers(channels)
+    validate_udp_ports(channels, master_config["udp"])
+
+    return master_config, channels
 
 
 def assign_udp_ports(channels, udp_config):
@@ -600,8 +704,46 @@ def handle_shutdown_signal(signum, frame):
     shutdown_channels(processes)
 
 
+def parse_arguments():
+    """Parse command-line arguments."""
+
+    parser = argparse.ArgumentParser(
+        description="TVHeadend Radio master process"
+    )
+
+    parser.add_argument(
+        "--validate",
+        action="store_true",
+        help="Validate configuration without starting channels",
+    )
+
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
+    args = parse_arguments()
+
     configure_logging()
+
+    if args.validate:
+        logger.info("Validating configuration...")
+
+        try:
+            master_config, channels = validate_configuration(
+                "config.json",
+                "channels",
+            )
+
+        except (OSError, json.JSONDecodeError, ValueError) as error:
+            logger.error(f"Configuration error: {error}")
+            sys.exit(1)
+
+        logger.info("Master configuration: OK")
+        logger.info(f"Channel configurations: {len(channels)} found")
+        logger.info("UDP configuration: OK")
+        logger.info("Configuration is valid.")
+
+        sys.exit(0)
 
     signal.signal(signal.SIGINT, handle_shutdown_signal)
     signal.signal(signal.SIGTERM, handle_shutdown_signal)
