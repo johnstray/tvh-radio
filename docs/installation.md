@@ -91,4 +91,4 @@ Review the following settings before installing it:
 
 The service is designed to run the master process, which manages the individual channel streamer processes.
 
-See the project README for the current systemd installation procedure.
+See [Operation](docs/operation.md) for systemd service management.

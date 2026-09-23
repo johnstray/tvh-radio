@@ -3,7 +3,7 @@
 
 <img src="images/logo-full.png" alt="tvh-radio Logo" height="300" />
 
-Turn almost any iHeartRadio internet radio streams into TVHeadend-compatible live channels.
+Turn almost any iHeartRadio internet radio stream into TVHeadend-compatible live channels.
 
 <br />
 
