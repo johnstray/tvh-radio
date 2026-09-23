@@ -51,6 +51,7 @@ Turn almost any iHeartRadio internet radio streams into TVHeadend-compatible liv
   - [Where should I look when something is not working?](#where-should-i-look-when-something-is-not-working)
 - [License](#license)
 - [Acknowledgements](#acknowledgements)
+  - [AI-Assisted Development](#ai-assisted-development)
 
 </details>
 <br />
@@ -393,6 +394,13 @@ Distributed under the OSL-3.0 License. See [LICENSE.md][license] for more inform
 The project also uses the official [TVHeadend documentation][tvheadend-documentation] as a reference for integration.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+<!-- AI-Assisted Development -->
+### AI-Assisted Development
+
+This project has been developed with assistance from AI tools, including ChatGPT. AI has been used for architectural discussion, code development and review, troubleshooting, documentation, and testing suggestions.
+
+All AI-generated suggestions and code are reviewed, tested, and adapted before being incorporated into the project. The project maintainer remains responsible for the final implementation, design, testing, and content.
 
 ---
 
