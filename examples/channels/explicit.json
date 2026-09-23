@@ -1,0 +1,31 @@
+{
+    "channel_name": "explicit",
+    "station_name": "Example Radio - Explicit",
+    "station_logo": "https://example.com/logo.png",
+    "fallback_station_logo": "../images/station_logo.png",
+    "track_meta_url": "https://example.com/metadata",
+    "icecast_url": "https://example.com/stream",
+    "udp_host": "127.0.0.1",
+    "udp_port": 1234,
+    "channel_number": 1001,
+    "tvh_tags": [
+        "Radio",
+        "Music"
+    ],
+    "fallback_metadata": {
+        "title": "Example Radio - Explicit",
+        "artist": "Example Artist",
+        "album": "Example Album",
+        "image_path": "../images/album_cover.png"
+    },
+    "stream": {
+        "update_interval": 5,
+        "metadata_empty_threshold": 3,
+        "image_definition": 720,
+        "request_timeout": 10,
+        "station_logo_retry_interval": 300,
+        "video_fps": 25,
+        "video_bitrate": 2500,
+        "audio_bitrate": 128000
+    }
+}
