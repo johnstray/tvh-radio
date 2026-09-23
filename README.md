@@ -417,7 +417,7 @@ The project also uses the official [TVHeadend documentation][tvheadend-documenta
 [tvheadend-integration]: docs/tvheadend.md
 [troubleshooting]: docs/troubleshooting.md
 [development]: docs/development.md
-[code-of-conduct]: https://github.com/johnstray/tvh-radio/blob/master/CODE_OF_CONDUCT.md
+[code-of-conduct]: https://github.com/johnstray/.github/blob/main/CODE_OF_CONDUCT.md
 [python]: https://www.python.org/
 [gstreamer]: https://gstreamer.freedesktop.org/
 [pillow]: https://python-pillow.org/
