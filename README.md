@@ -1,97 +1,177 @@
-# tvh-radio
+<a id="readme-top"></a>
+<div align="center">
 
-Turn almost any internet radio stream into a TVHeadend-compatible channel with generated video showing station and now-playing information.
+<img src="images/logo-full.png" alt="tvh-radio Logo" height="300" />
 
-`tvh-radio` uses GStreamer to combine a radio stream with dynamically generated video, producing an MPEG-TS stream that can be consumed by TVHeadend.
+Turn almost any iHeartRadio internet radio streams into TVHeadend-compatible live channels.
 
-> **Status:** This project is under active development and is not yet considered a public release.
+<br />
 
-## How it works
+[![contributors][badge-contributors]][contributors]
+[![last update][badge-last-commit]][last-commit]
+[![forks][badge-forks]][forks]
+[![stars][badge-stars]][stars]
+[![open issues][badge-issues]][issues]
+[![license][badge-license]][license]
 
-Each configured radio station runs as its own streamer process.
+#### [Documentation][documentation] · [Report Bug][report-bug] · [Request Feature][request-feature]
+
+</div>
+
+<br />
+
+<!-- Table of Contents -->
+<details>
+<summary>Table of Contents</summary>
+<hr />
+
+- [About the Project](#about-the-project)
+  - [Introduction](#introduction)
+  - [Features](#features)
+  - [Architecture](#architecture)
+- [Getting Started](#getting-started)
+  - [Prerequisites](#prerequisites)
+  - [Installation](#installation)
+  - [Deployment](#deployment)
+- [Usage](#usage)
+- [Roadmap](#roadmap)
+  - [Monitoring and operations](#monitoring-and-operations)
+  - [Runtime management](#runtime-management)
+  - [Streaming and metadata](#streaming-and-metadata)
+  - [Display and presentation](#display-and-presentation)
+  - [Code quality and maintainability](#code-quality-and-maintainability)
+- [Contributing](#contributing)
+  - [Top contributors:](#top-contributors)
+  - [Code of Conduct](#code-of-conduct)
+- [FAQ](#faq)
+  - [Does tvh-radio replace TVHeadend?](#does-tvh-radio-replace-tvheadend)
+  - [Can UDP ports be assigned automatically?](#can-udp-ports-be-assigned-automatically)
+  - [Can channel numbers be assigned automatically?](#can-channel-numbers-be-assigned-automatically)
+  - [What happens if a metadata service goes offline?](#what-happens-if-a-metadata-service-goes-offline)
+  - [What happens if artwork is unavailable?](#what-happens-if-artwork-is-unavailable)
+  - [Where should I look when something is not working?](#where-should-i-look-when-something-is-not-working)
+- [License](#license)
+- [Acknowledgements](#acknowledgements)
+
+</details>
+<br />
+
+<!-- About the Project -->
+## About the Project
+
+<!-- Introduction -->
+### Introduction
+
+`tvh-radio` turns internet radio streams into live MPEG-TS channels that can be consumed by TVHeadend.
+
+Each configured radio station is handled by its own streamer process. The streamer retrieves the station's audio, metadata and artwork, generates a now-playing image, combines the generated video with the audio using GStreamer, and outputs an MPEG-TS stream over UDP.
+
+A master process manages the individual streamers, monitors their health and automatically restarts failed channels according to the configured restart policy.
+
+The project is designed for people who want to make internet radio stations available through a TVHeadend installation, including setups where those channels are then consumed by DVR or media-centre software.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+<!-- Features -->
+### Features
+
+- Convert internet radio streams into TVHeadend-compatible MPEG-TS channels.
+- Generate now-playing video from station metadata and artwork.
+- Combine generated H.264 video with AAC audio using GStreamer.
+- Output each channel as MPEG-TS over UDP.
+- Support multiple radio channels from a single master process.
+- Automatically allocate UDP ports when explicit ports are not configured.
+- Generate an M3U playlist for TVHeadend IPTV Automatic Network configuration.
+- Include channel numbers, names, logos and TVHeadend tags in the generated playlist.
+- Handle temporary metadata API failures and HTTP 204 responses.
+- Provide fallback metadata and artwork.
+- Retry unavailable station logos.
+- Recover from temporary audio/Icecast failures.
+- Monitor streamer processes and restart failed channels.
+- Detect repeated restart failures and use configurable backoff.
+- Shut down streamers cleanly.
+- Provide configuration validation with a dry-run mode.
+- Include an iHeartRadio extractor to help create channel configurations from supported iHeartRadio station pages.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+### Architecture
+
+The application is split into a master process and individual channel streamers:
 
 ```text
-Radio stream
-     │
-     ├── Audio ──────────────┐
-     │                       │
-     └── Track metadata      │
-              │              │
-              ▼              │
-       Pillow-generated      │
-          JPEG video         │
-              │              │
-              ▼              ▼
-          GStreamer
-              │
-       H.264 + AAC
-              │
-          MPEG-TS
-              │
-             UDP
-              │
-         TVHeadend
+                         +----------------+
+                         |   master.py    |
+                         | process manager|
+                         +-------+--------+
+                                 |
+                 +---------------+---------------+
+                 |               |               |
+                 v               v               v
+          +------------+   +------------+   +------------+
+          | streamer   |   | streamer   |   | streamer   |
+          | channel A  |   | channel B  |   | channel C  |
+          +-----+------+   +-----+------+   +-----+------+
+                |                |                |
+                v                v                v
+          MPEG-TS/UDP       MPEG-TS/UDP       MPEG-TS/UDP
+                |                |                |
+                +----------------+----------------+
+                                 |
+                                 v
+                            TVHeadend
 ```
 
-The master process manages the individual streamer processes:
+The master handles configuration, UDP allocation, playlist generation, process monitoring, restart/recovery and shutdown. Each streamer handles one channel's audio, metadata, artwork, image generation, GStreamer pipeline and MPEG-TS output.
 
-```text
-systemd
-   │
-   ▼
-master.py
-   ├── streamer.py → channel 1
-   ├── streamer.py → channel 2
-   ├── streamer.py → channel 3
-   └── ...
-```
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-The master process is responsible for:
+<!-- Getting Started -->
+## Getting Started
 
-- discovering channel configurations
-- assigning UDP ports
-- starting streamer processes
-- monitoring streamer processes
-- restarting failed streamers
-- generating the TVHeadend M3U8 playlist
-- gracefully shutting down channels
+The quickest way to get started is:
 
-Each streamer is responsible for:
+1. Install the required system dependencies.
+2. Clone the repository.
+3. Create a Python virtual environment using the system GStreamer/PyGObject packages.
+4. Install the Python dependencies.
+5. Create one or more channel configurations.
+6. Validate the configuration.
+7. Start `tvh-radio`.
+8. Configure TVHeadend to consume the generated UDP streams or M3U playlist.
 
-- retrieving track metadata
-- generating the now-playing image
-- streaming the source audio
-- encoding video and audio with GStreamer
-- producing the MPEG-TS UDP stream
-- recovering from temporary audio or metadata failures
+An iHeartRadio extractor is included under `iheart_extract/`. It can inspect a supported iHeartRadio station page and extract information useful for creating a channel configuration.
 
-## Requirements
+See [Installation][installation] for the complete setup procedure.
 
-`tvh-radio` is intended for Linux systems.
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-### System dependencies
+<!-- Prerequisites -->
+### Prerequisites
 
-The following are required from the operating system:
+`tvh-radio` requires:
 
+- Linux
 - Python 3
 - GStreamer 1.x
-- GStreamer plugins required by the configured pipeline
+- GStreamer plugins required for H.264, AAC and MPEG-TS processing
 - PyGObject / GObject Introspection
-- GStreamer Python bindings
+- Python packages listed in `requirements.txt`
 
-The exact package names vary between Linux distributions.
+The recommended virtual environment uses the system-installed GStreamer/PyGObject packages:
 
-For example, on a Fedora-based system, the GStreamer and PyGObject packages should be installed using the system package manager rather than pip.
-
-### Python dependencies
-
-Python dependencies are listed in:
-
-```text
-requirements.txt
+```bash
+python3 -m venv .venv --system-site-packages
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
-## Installation
+See [Installation][installation-2] for the complete dependency and setup procedure.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+<!-- Installation -->
+### Installation
 
 Clone the repository:
 
@@ -100,273 +180,256 @@ git clone https://github.com/johnstray/tvh-radio.git
 cd tvh-radio
 ```
 
-### Create a virtual environment
-
-Create the virtual environment with access to the system-installed PyGObject and GStreamer bindings:
+Create and activate the virtual environment:
 
 ```bash
 python3 -m venv .venv --system-site-packages
-```
-
-Activate it:
-
-```bash
 source .venv/bin/activate
 ```
 
 Install the Python dependencies:
 
 ```bash
-python -m pip install -r requirements.txt
+pip install -r requirements.txt
 ```
 
-The virtual environment is intentionally not stored in Git.
+Create a channel configuration in `channels/`, using one of the examples in `examples/channels/`.
 
-### Verify the environment
-
-Check Python:
+Before starting the service, validate the configuration:
 
 ```bash
-python --version
+python master.py --validate
 ```
 
-Check PyGObject:
+See [Installation][installation-3], [Configuration][configuration] and [Channels][channels] for the complete instructions.
 
-```bash
-python -c "import gi; print('PyGObject:', gi.__version__)"
-```
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-Check GStreamer:
+<!-- Deployment -->
+### Deployment
 
-```bash
-python -c "from gi.repository import Gst; Gst.init(None); print('GStreamer:', Gst.version_string())"
-```
+For normal long-running operation, `tvh-radio` should be run as a systemd service.
 
-Check Pillow:
+The repository includes a systemd service template under `systemd/`.
 
-```bash
-python -c "import PIL; print('Pillow:', PIL.__version__)"
-```
-
-All of these should complete successfully before continuing.
-
-## Configuration
-
-The master process uses:
-
-```text
-config.json
-```
-
-Channel configurations are stored in:
-
-```text
-channels/
-```
-
-Each JSON file represents one radio channel.
-
-The master configuration controls items such as:
-
-- playlist output
-- starting TVHeadend channel number
-- streamer restart behaviour
-- UDP port allocation range
-
-Example:
-
-```json
-{
-    "playlist": {
-        "output": "playlist.m3u8",
-        "starting_channel_number": 908
-    },
-    "restart": {
-        "limit": 3,
-        "window": 60,
-        "reset_time": 300,
-        "backoff_time": 300
-    },
-    "udp": {
-        "port_start": 1234,
-        "port_end": 1333
-    }
-}
-```
-
-UDP ports can be assigned explicitly in a channel configuration, or automatically allocated from the configured UDP port range.
-
-Automatically allocated ports are written back to the channel configuration so that the assignment persists between restarts.
-
-## Running manually
-
-For development and testing, activate the virtual environment and run:
-
-```bash
-python master.py
-```
-
-The master process will discover the channel configurations and start one streamer process for each channel.
-
-To stop the application, press:
-
-```text
-Ctrl+C
-```
-
-The master will request a graceful shutdown of all streamer processes.
-
-## iHeartRadio channel extractor
-
-The `iheart_extract/` directory contains a tool for extracting station information from iHeartRadio station pages.
-
-See:
-
-```text
-iheart_extract/README.md
-```
-
-for usage instructions.
-
-The extractor can output a complete channel configuration template using:
-
-```bash
-python iheart_extract/iheart_extract.py --channel-json <URL>
-```
-
-## systemd
-
-For a long-running installation, `tvh-radio` can be managed by systemd.
-
-An example service file is provided in:
-
-```text
-systemd/tvh-radio.service
-```
-
-The example assumes the application is installed under:
-
-```text
-/opt/tvh-radio
-```
-
-and that the Python virtual environment is:
-
-```text
-/opt/tvh-radio/.venv
-```
-
-Before installing the service, adjust the `User` and `Group` settings to match the account that should run `tvh-radio`.
-
-Install the service:
-
-```bash
-sudo cp systemd/tvh-radio.service /etc/systemd/system/
-```
-
-Reload systemd:
-
-```bash
-sudo systemctl daemon-reload
-```
-
-Start the service:
-
-```bash
-sudo systemctl start tvh-radio
-```
-
-Check its status:
-
-```bash
-systemctl status tvh-radio
-```
-
-Enable automatic startup at boot:
+A typical installation uses:
 
 ```bash
 sudo systemctl enable tvh-radio
+sudo systemctl start tvh-radio
 ```
 
-Or enable and start it in one command:
+Check the service with:
 
 ```bash
-sudo systemctl enable --now tvh-radio
+sudo systemctl status tvh-radio
 ```
 
-### Viewing logs
-
-When running under systemd, application and streamer output is available through journald:
-
-```bash
-journalctl -u tvh-radio
-```
-
-Follow the log in real time:
+View logs with:
 
 ```bash
 journalctl -u tvh-radio -f
 ```
 
-The master process forwards streamer output into the service log.
+See [Installation][installation-4] and [Operation][operation] for the complete deployment and service-management procedures.
 
-### Process recovery
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-systemd manages the master process, while the master manages the individual streamer processes.
+<!-- Usage -->
+## Usage
 
-If the master unexpectedly exits, systemd restarts it and cleans up the existing service processes before starting the replacement.
+Validate configuration before starting:
 
-If an individual streamer exits unexpectedly, the master can restart that streamer independently.
-
-This separation prevents a failed channel from unnecessarily taking down the other channels.
-
-## Development and testing
-
-The project is being developed incrementally with manual testing after significant changes.
-
-The main end-to-end path is:
-
-```text
-Pillow metadata
-    ↓
-GStreamer
-    ↓
-H.264 + AAC
-    ↓
-MPEG-TS
-    ↓
-UDP
-    ↓
-TVHeadend
-    ↓
-TVHeadend service
-    ↓
-tvhproxy
-    ↓
-Plex Live TV
+```bash
+python master.py --validate
 ```
 
-### Regression test checklist
+For development or testing, run the master directly:
 
-At minimum, an end-to-end test should confirm:
+```bash
+python master.py
+```
 
-- video appears
-- audio works
-- metadata artwork updates
-- no sustained GStreamer errors occur
-- the stream survives normal operation
-- audio reconnects after a temporary source failure
-- graceful shutdown works
-- failed streamer processes restart
-- the master can recover after an unexpected failure
-- the generated playlist contains the expected channels
+Channel configurations are stored in `channels/`. Examples are provided in `examples/channels/`.
 
-## Project status
+A channel's UDP output can be tested independently with:
 
-`tvh-radio` is still under active development.
+```bash
+mpv udp://127.0.0.1:1234
+```
 
-The current architecture is focused on providing a reliable foundation for running multiple radio channels through TVHeadend. Future development will expand the master process, configuration management, monitoring, demand-based channel startup, and other operational features.
+TVHeadend can consume the channels individually through IPTV muxes or through the generated M3U playlist using an IPTV Automatic Network.
 
+See [Operation][operation-2], [TVHeadend Integration][tvheadend-integration] and [Troubleshooting][troubleshooting].
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+<!-- Roadmap -->
+## Roadmap
+
+`tvh-radio` 1.0.0 provides the stable foundation for running internet radio streams as TVHeadend channels. Future development will focus on making the system more flexible, easier to monitor and operate, and less dependent on specific streaming providers.
+
+Planned work includes:
+
+### Monitoring and operations
+
+- **Status and health API** — expose machine-readable master and per-channel health, runtime state, audio/metadata status, restart information, UDP endpoints, and useful error information.
+- **Zabbix-oriented monitoring** — provide stable metrics and an integration path for Zabbix and other external monitoring systems.
+- **Richer command-line diagnostics** — add commands for validation, channel listings, runtime status, and diagnostics without requiring users to inspect configuration files or logs directly.
+
+### Runtime management
+
+- **Demand-based streaming** — allow channels to run on demand rather than continuously, with configurable idle grace periods and per-channel `on-demand` / `always-on` modes.
+- **Configuration hot-reload** — detect channel configuration changes and safely add, remove, or update channels without restarting the master process, while keeping the generated playlist synchronised.
+
+### Streaming and metadata
+
+- **Audio source abstraction** — separate audio source handling from the core streamer so Icecast is one implementation rather than a hard-coded dependency.
+- **Additional audio source types** — add support for other suitable audio input methods once the source abstraction is in place.
+- **Generalised metadata sources** — separate metadata acquisition from the streamer so providers other than iHeart can be supported.
+- **Configurable JSON metadata mapping** — allow channel configurations to describe how artist, title, album, artwork, and other fields are extracted from JSON metadata responses.
+
+### Display and presentation
+
+- **Startup and status images** — provide meaningful video while channels are starting, reconnecting, waiting for metadata, or otherwise temporarily unavailable.
+- **Configurable/custom layouts** — investigate and potentially implement alternative now-playing layouts without coupling layout definitions to the core streaming logic.
+
+### Code quality and maintainability
+
+- **Formal channel configuration schema** — define the configuration structure, required and optional fields, valid values, and validation rules in a more formal and maintainable way.
+- **Streamer architecture refactor** — split the streamer into smaller components with clearer responsibilities while preserving the existing streaming, recovery, logging, and shutdown behaviour.
+- **Automated test suite** — add automated coverage for configuration validation, UDP allocation, playlist generation, metadata handling, fallback behaviour, and other core functionality, reducing reliance on manual regression testing.
+
+These items are tracked as GitHub issues and may be developed independently as the project evolves. The roadmap is intentionally not tied to a fixed release schedule; features may be added, changed, or reprioritised as real-world usage provides feedback.
+
+## Contributing
+
+Contributions are welcome.
+
+Before making a significant change, check the existing issues and documentation to see whether the work is already planned.
+
+Please keep the separation between `master.py` and `streamer.py` in mind: the master is responsible for orchestration and process management, while channel-specific streaming functionality belongs in the streamer.
+
+See [Development][development] for the development workflow and testing guidance.
+
+1. Fork the Project
+2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the Branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
+
+### Top contributors:
+
+<a href="https://github.com/johnstray/tvh-radio/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=johnstray/tvh-radio" alt="contrib.rocks image" />
+</a>
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+
+<!-- Code of Conduct -->
+### Code of Conduct
+
+Please read the [Code of Conduct][code-of-conduct]
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+<!-- FAQ -->
+## FAQ
+
+### Does tvh-radio replace TVHeadend?
+
+No. `tvh-radio` provides IPTV/MPEG-TS streams for TVHeadend. TVHeadend remains responsible for receiving streams, discovering services, mapping channels and providing them to clients.
+
+### Can UDP ports be assigned automatically?
+
+Yes. A channel can omit `udp_port` and allow the master to allocate a port from the configured UDP range.
+
+### Can channel numbers be assigned automatically?
+
+Yes. A channel can omit `channel_number` and allow the master to allocate a channel number according to the configured playlist settings.
+
+### What happens if a metadata service goes offline?
+
+The streamer uses its configured fallback behaviour. Temporary empty responses can retain the existing now-playing image, while sustained empty responses or other metadata failures can result in fallback metadata being displayed.
+
+### What happens if artwork is unavailable?
+
+Configured fallback artwork is used. Station logos also have a primary, configured fallback and generic fallback path.
+
+### Where should I look when something is not working?
+
+Start with:
+
+```bash
+python master.py --validate
+journalctl -u tvh-radio -f
+```
+
+If the streamer is running, test its UDP output independently with `mpv` before investigating TVHeadend.
+
+See [Troubleshooting][troubleshooting-2].
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+<!-- License -->
 ## License
 
-See [LICENSE.md](LICENSE.md).
+Distributed under the OSL-3.0 License. See [LICENSE.md][license-md] for more information.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+<!-- Acknowledgments -->
+## Acknowledgements
+
+`tvh-radio` makes use of open-source projects and libraries including:
+
+- [Python][python]
+- [GStreamer][gstreamer]
+- [Pillow][pillow]
+- [Requests][requests]
+- [Beautiful Soup][beautiful-soup]
+- [Shields.io][shields-io]
+
+The project also uses the official [TVHeadend documentation][tvheadend-documentation] as a reference for integration.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+---
+
+[badge-contributors]: https://img.shields.io/github/contributors/johnstray/tvh-radio
+[contributors]: https://github.com/johnstray/tvh-radio/graphs/contributors
+[badge-last-commit]: https://img.shields.io/github/last-commit/johnstray/tvh-radio
+[last-commit]: https://github.com/johnstray/tvh-radio/commits/main
+[badge-forks]: https://img.shields.io/github/forks/johnstray/tvh-radio
+[forks]: https://github.com/johnstray/tvh-radio/network/members
+[badge-stars]: https://img.shields.io/github/stars/johnstray/tvh-radio
+[stars]: https://github.com/johnstray/tvh-radio/stargazers
+[badge-issues]: https://img.shields.io/github/issues/johnstray/tvh-radio
+[issues]: https://github.com/johnstray/tvh-radio/issues/
+[badge-license]: https://img.shields.io/github/license/johnstray/tvh-radio.svg
+[license]: LICENSE.md
+[documentation]: docs/installation.md
+[report-bug]: https://github.com/johnstray/tvh-radio/issues/
+[request-feature]: https://github.com/johnstray/tvh-radio/issues/
+[installation]: docs/installation.md
+[installation-2]: docs/installation.md
+[installation-3]: docs/installation.md
+[configuration]: docs/configuration.md
+[channels]: docs/channels.md
+[installation-4]: docs/installation.md
+[operation]: docs/operation.md
+[operation-2]: docs/operation.md
+[tvheadend-integration]: docs/tvheadend.md
+[troubleshooting]: docs/troubleshooting.md
+[development]: docs/development.md
+[code-of-conduct]: https://github.com/johnstray/tvh-radio/blob/master/CODE_OF_CONDUCT.md
+[troubleshooting-2]: docs/troubleshooting.md
+[license-md]: LICENSE.md
+[python]: https://www.python.org/
+[gstreamer]: https://gstreamer.freedesktop.org/
+[pillow]: https://python-pillow.org/
+[requests]: https://requests.readthedocs.io/
+[beautiful-soup]: https://www.crummy.com/software/BeautifulSoup/
+[shields-io]: https://shields.io/
+[tvheadend-documentation]: https://docs.tvheadend.org/
