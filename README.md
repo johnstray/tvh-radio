@@ -12,7 +12,6 @@ Turn almost any iHeartRadio internet radio streams into TVHeadend-compatible liv
 [![forks][badge-forks]][forks]
 [![stars][badge-stars]][stars]
 [![open issues][badge-issues]][issues]
-[![license][badge-license]][license]
 
 #### [Documentation][documentation] · [Report Bug][report-bug] · [Request Feature][request-feature]
 
@@ -166,7 +165,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-See [Installation][installation-2] for the complete dependency and setup procedure.
+See [Installation][installation] for the complete dependency and setup procedure.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -201,7 +200,7 @@ Before starting the service, validate the configuration:
 python master.py --validate
 ```
 
-See [Installation][installation-3], [Configuration][configuration] and [Channels][channels] for the complete instructions.
+See [Installation][installation], [Configuration][configuration] and [Channels][channels] for the complete instructions.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -231,7 +230,7 @@ View logs with:
 journalctl -u tvh-radio -f
 ```
 
-See [Installation][installation-4] and [Operation][operation] for the complete deployment and service-management procedures.
+See [Installation][installation] and [Operation][operation] for the complete deployment and service-management procedures.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -260,7 +259,7 @@ mpv udp://127.0.0.1:1234
 
 TVHeadend can consume the channels individually through IPTV muxes or through the generated M3U playlist using an IPTV Automatic Network.
 
-See [Operation][operation-2], [TVHeadend Integration][tvheadend-integration] and [Troubleshooting][troubleshooting].
+See [Operation][operation], [TVHeadend Integration][tvheadend-integration] and [Troubleshooting][troubleshooting].
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -368,14 +367,14 @@ journalctl -u tvh-radio -f
 
 If the streamer is running, test its UDP output independently with `mpv` before investigating TVHeadend.
 
-See [Troubleshooting][troubleshooting-2].
+See [Troubleshooting][troubleshooting].
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 <!-- License -->
 ## License
 
-Distributed under the OSL-3.0 License. See [LICENSE.md][license-md] for more information.
+Distributed under the OSL-3.0 License. See [LICENSE.md][license] for more information.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -407,25 +406,18 @@ The project also uses the official [TVHeadend documentation][tvheadend-documenta
 [stars]: https://github.com/johnstray/tvh-radio/stargazers
 [badge-issues]: https://img.shields.io/github/issues/johnstray/tvh-radio
 [issues]: https://github.com/johnstray/tvh-radio/issues/
-[badge-license]: https://img.shields.io/github/license/johnstray/tvh-radio.svg
 [license]: LICENSE.md
 [documentation]: docs/installation.md
 [report-bug]: https://github.com/johnstray/tvh-radio/issues/
 [request-feature]: https://github.com/johnstray/tvh-radio/issues/
 [installation]: docs/installation.md
-[installation-2]: docs/installation.md
-[installation-3]: docs/installation.md
 [configuration]: docs/configuration.md
 [channels]: docs/channels.md
-[installation-4]: docs/installation.md
 [operation]: docs/operation.md
-[operation-2]: docs/operation.md
 [tvheadend-integration]: docs/tvheadend.md
 [troubleshooting]: docs/troubleshooting.md
 [development]: docs/development.md
 [code-of-conduct]: https://github.com/johnstray/tvh-radio/blob/master/CODE_OF_CONDUCT.md
-[troubleshooting-2]: docs/troubleshooting.md
-[license-md]: LICENSE.md
 [python]: https://www.python.org/
 [gstreamer]: https://gstreamer.freedesktop.org/
 [pillow]: https://python-pillow.org/
