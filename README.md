@@ -9,9 +9,9 @@ Turn almost any iHeartRadio internet radio stream into TVHeadend-compatible live
 
 [![contributors][badge-contributors]][contributors]
 [![last update][badge-last-commit]][last-commit]
+[![open issues][badge-issues]][issues]
 [![forks][badge-forks]][forks]
 [![stars][badge-stars]][stars]
-[![open issues][badge-issues]][issues]
 
 #### [Documentation][documentation] · [Report Bug][report-bug] · [Request Feature][request-feature]
 
