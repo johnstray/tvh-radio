@@ -12,9 +12,7 @@ import requests
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
 
 gi.require_version("Gst", "1.0")
-gi.require_version("GstApp", "1.0")
-
-from gi.repository import GLib, Gst, GstApp
+from gi.repository import GLib, Gst
 
 logger = logging.getLogger("tvh-radio")
 
@@ -132,7 +130,7 @@ def configure_fonts():
             "/usr/share/fonts/liberation-sans-fonts/LiberationSans-Regular.ttf",
             FONT_SIZE_SUB,
         )
-    except IOError:
+    except OSError:
         FONT_TITLE = ImageFont.load_default()
         FONT_SUB = ImageFont.load_default()
 
@@ -212,7 +210,7 @@ def get_station_logo():
         except requests.RequestException as error:
             logger.warning(f"Error fetching station logo: {error}")
 
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001
             logger.warning(f"Error processing station logo: {error}")
 
     else:
@@ -683,7 +681,6 @@ def on_audio_pad_added(decodebin, pad, audioconvert):
 
 def reconnect_audio_source():
     global icecast_source
-    global audio_failed
     global audio_reconnecting
     global reconnect_source_id
 
@@ -733,7 +730,6 @@ def reconnect_audio_source():
 
 def on_message(bus, message):
     global audio_failed
-    global audio_reconnecting
     global reconnect_source_id
 
     message_type = message.type
