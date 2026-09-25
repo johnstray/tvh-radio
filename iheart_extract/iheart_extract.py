@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Extract iHeartRadio station information for tvh-radio.
 
@@ -282,7 +281,7 @@ def main() -> int:
             print(f"Error: {exc}", file=sys.stderr)
         return 1
 
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         if args.debug:
             traceback.print_exc()
         else:
