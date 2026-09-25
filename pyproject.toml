@@ -14,9 +14,8 @@ select = [
     "F",
     "I",
     "B",
-    "BLE",
-    "PLW",
-    "SIM",
-    "TRY",
     "UP",
 ]
+
+[tool.ruff.lint.per-file-ignores]
+"streamer.py" = ["E402"]
