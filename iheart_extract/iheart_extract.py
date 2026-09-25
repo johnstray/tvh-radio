@@ -81,22 +81,22 @@ def fetch_initial_props(url: str) -> dict:
     except requests.Timeout:
         raise ExtractionError(
             "Unable to retrieve iHeart page: connection timed out."
-        )
+        ) from None
 
     except requests.ConnectionError:
         raise ExtractionError(
             "Unable to retrieve iHeart page: could not connect to the server."
-        )
+        ) from None
 
     except requests.HTTPError as exc:
         raise ExtractionError(
             f"Unable to retrieve iHeart page: HTTP {exc.response.status_code}."
-        )
+        ) from None
 
     except requests.RequestException:
         raise ExtractionError(
             "Unable to retrieve iHeart page: request failed."
-        )
+        ) from None
 
     soup = BeautifulSoup(response.text, "html.parser")
     script = soup.find("script", id="initial-props")
