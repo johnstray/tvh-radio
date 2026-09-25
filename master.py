@@ -8,7 +8,6 @@ import threading
 import time
 from pathlib import Path
 
-
 logger = logging.getLogger("tvh-radio.master")
 processes = {}
 shutdown_requested = False
@@ -500,7 +499,7 @@ def start_channels(channels):
     """Start all configured channel processes."""
     processes = {}
 
-    for _config_file, channel in channels:
+    for config_file, channel in channels:
         channel_state = create_channel_state(config_file, channel)
         channel_name = channel_state["channel_name"]
 
@@ -640,7 +639,7 @@ def generate_playlist(channels, master_config):
         "#EXTM3U"
     ]
 
-    for config_file, channel in channels:
+    for _config_file, channel in channels:
         if "channel_number" in channel:
             channel_number = channel["channel_number"]
         else:
