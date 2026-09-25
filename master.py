@@ -42,7 +42,7 @@ def validate_master_config(config):
     playlist_config = config["playlist"]
 
     if not isinstance(playlist_config, dict):
-        raise ValueError(
+        raise TypeError(
             "playlist configuration must be an object"
         )
 
@@ -58,7 +58,7 @@ def validate_master_config(config):
             )
 
     if not isinstance(playlist_config["output"], str):
-        raise ValueError(
+        raise TypeError(
             "playlist output must be a string"
         )
 
@@ -71,7 +71,7 @@ def validate_master_config(config):
         not isinstance(playlist_config["starting_channel_number"], int)
         or isinstance(playlist_config["starting_channel_number"], bool)
     ):
-        raise ValueError(
+        raise TypeError(
             "starting_channel_number must be an integer"
         )
 
@@ -180,7 +180,7 @@ def validate_channel_config(config):
     ]
 
     if not isinstance(config["fallback_metadata"], dict):
-        raise ValueError(
+        raise TypeError(
             "fallback_metadata configuration must be an object"
         )
 
@@ -193,20 +193,22 @@ def validate_channel_config(config):
             not isinstance(config["channel_number"], int)
             or isinstance(config["channel_number"], bool)
         ):
-            raise ValueError("channel_number must be an integer")
+            raise TypeError("channel_number must be an integer")
 
         if config["channel_number"] < 1:
             raise ValueError("channel_number must be greater than 0")
 
-    if "udp_port" in config:
-        if (
+    if (
+        "udp_port" in config
+        and (
             not isinstance(config["udp_port"], int)
             or isinstance(config["udp_port"], bool)
             or not 1 <= config["udp_port"] <= 65535
-        ):
-            raise ValueError(
-                "udp_port must be an integer between 1 and 65535"
-            )
+        )
+    ):
+        raise TypeError(
+            "udp_port must be an integer between 1 and 65535"
+        )
 
     if "tvh_tags" in config:
         if not isinstance(config["tvh_tags"], list):
@@ -223,7 +225,7 @@ def validate_channel_config(config):
     stream_config = config["stream"]
 
     if not isinstance(stream_config, dict):
-        raise ValueError(
+        raise TypeError(
             "stream configuration must be an object"
         )
 
