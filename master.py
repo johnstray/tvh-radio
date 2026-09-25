@@ -28,7 +28,7 @@ def configure_logging():
 
 def load_master_config(config_file):
     """Load the master configuration from a JSON file."""
-    with open(config_file, "r", encoding="utf-8") as file:
+    with open(config_file, encoding="utf-8") as file:
         return json.load(file)
 
 
@@ -282,7 +282,7 @@ def validate_channel_numbers(channels):
     """Validate that configured channel numbers are unique."""
     channel_numbers = {}
 
-    for config_file, channel in channels:
+    for _config_file, channel in channels:
         if "channel_number" not in channel:
             continue
 
@@ -305,7 +305,7 @@ def validate_udp_ports(channels, udp_config):
 
     used_ports = set()
 
-    for config_file, config in channels:
+    for _config_file, config in channels:
         if "udp_port" in config:
             port = config["udp_port"]
 
