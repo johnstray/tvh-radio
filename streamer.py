@@ -31,12 +31,12 @@ def configure_logging(channel_name):
 
 def load_config(config_file):
     try:
-        with open(config_file, "r", encoding="utf-8") as file:
+        with open(config_file, encoding="utf-8") as file:
             config = json.load(file)
     except FileNotFoundError:
-        raise RuntimeError(f"Configuration file not found: {config_file}")
+        raise RuntimeError(f"Configuration file not found: {config_file}") from None
     except json.JSONDecodeError as error:
-        raise RuntimeError(f"Invalid JSON in configuration file: {error}")
+        raise RuntimeError(f"Invalid JSON in configuration file: {error}") from None
 
     required_keys = [
         "channel_name",
