@@ -13,6 +13,7 @@ logger = logging.getLogger("tvh-radio.master")
 processes = {}
 shutdown_requested = False
 
+
 def configure_logging():
     """Configure logging for the master process."""
     logging.basicConfig(
@@ -149,7 +150,7 @@ def find_channel_configs(config_directory):
 
 def load_channel_config(config_file):
     """Load a channel configuration from a JSON file."""
-    with open(config_file, "r", encoding="utf-8") as file:
+    with open(config_file, encoding="utf-8") as file:
         return json.load(file)
 
 
@@ -358,7 +359,7 @@ def assign_udp_ports(channels, udp_config):
     assigned_ports = []
 
     # Reserve explicitly assigned ports first.
-    for config_file, config in channels:
+    for _config_file, config in channels:
         if "udp_port" in config:
             port = config["udp_port"]
 
@@ -499,7 +500,7 @@ def start_channels(channels):
     """Start all configured channel processes."""
     processes = {}
 
-    for config_file, channel in channels:
+    for _config_file, channel in channels:
         channel_state = create_channel_state(config_file, channel)
         channel_name = channel_state["channel_name"]
 
