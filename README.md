@@ -78,8 +78,7 @@ The project is designed for people who want to make internet radio stations avai
     <img src="docs/screenshot_3.png" alt="Screenshot 3" width="30%">
 </div>
 
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
+<br />
 
 <!-- Features -->
 ### Features
