@@ -70,6 +70,8 @@ A master process manages the individual streamers, monitors their health and aut
 
 The project is designed for people who want to make internet radio stations available through a TVHeadend installation, including setups where those channels are then consumed by DVR or media-centre software.
 
+<br />
+
 <div align="center">
     <img src="docs/screenshot_1.png" alt="Screenshot 1" width="30%">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
     <img src="docs/screenshot_2.png" alt="Screenshot 2" width="30%">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
