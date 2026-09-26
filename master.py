@@ -2,6 +2,7 @@ import argparse
 import json
 import logging
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -300,6 +301,17 @@ def validate_channel_numbers(channels):
         channel_numbers[channel_number] = channel["channel_name"]
 
 
+def is_udp_port_available(host, port):
+    """Return True is a UDP port is available on the specified host/interface"""
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        try:
+            sock.bind((host,port))
+        except OSError:
+            return False
+
+    return True
+
+
 def validate_udp_ports(channels, udp_config):
     """Validate UDP port assignments without modifying configuration files."""
 
@@ -312,6 +324,12 @@ def validate_udp_ports(channels, udp_config):
             if port in used_ports:
                 raise ValueError(
                     f"Duplicate UDP port {port} assigned to multiple channels"
+                )
+
+            if not is_udp_port_available(config["udp_host"], port):
+                raise ValueError(
+                    f"UDP port {port} for channel "
+                    f"'{config['channel_name']}' is already in use"
                 )
 
             used_ports.add(port)
@@ -378,8 +396,16 @@ def assign_udp_ports(channels, udp_config):
         if "udp_port" in config:
             continue
 
-        while next_port <= port_end and next_port in used_ports:
-            next_port += 1
+        while next_port <= port_end:
+            if next_port in used_ports:
+                next_port += 1
+                continue
+
+            if not is_udp_port_available(config["udp_host"], next_port):
+                next_port += 1
+                continue
+
+            break
 
         if next_port > port_end:
             raise ValueError(
