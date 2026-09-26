@@ -650,7 +650,7 @@ def generate_playlist(channels, master_config):
             next_channel_number += 1
 
         tvh_tags = channel.get("tvh_tags", [])
-        tvh_tags_value = ",".join(tvh_tags)
+        tvh_tags_value = "|".join(tvh_tags)
 
         if tvh_tags_value:
             tvh_tags_attribute = f' tvh-tags="{tvh_tags_value}"'
@@ -661,7 +661,7 @@ def generate_playlist(channels, master_config):
             f'#EXTINF:-1 tvg-name="{channel["station_name"]}" '
             f'tvg-id="{channel["channel_name"]}" '
             f'tvg-logo="{channel["station_logo"]}" '
-            f'tvg-chno="{channel_number}"'
+            f'tvg-chnum="{channel_number}"'
             f'{tvh_tags_attribute},'
             f'{channel["station_name"]}'
         )
