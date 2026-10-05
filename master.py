@@ -163,7 +163,6 @@ def validate_channel_config(config):
         "fallback_station_logo",
         "track_meta_url",
         "icecast_url",
-        "udp_host",
         "fallback_metadata",
     ]
 
@@ -312,6 +311,23 @@ def is_udp_port_available(host, port):
     return True
 
 
+def assign_udp_hosts(channels, udp_config):
+    """Assign and persist UDP hosts for channels without an explicit host."""
+
+    default_host = udp_config.get("host", "127.0.0.1")
+    assigned_hosts = []
+
+    for config_file, config in channels:
+        if "udp_host" in config:
+            continue
+
+        config["udp_host"] = default_host
+        assigned_hosts.append((config_file, config))
+
+    for config_file, config in assigned_hosts:
+        save_channel_config(config_file, config)
+
+
 def validate_udp_ports(channels, udp_config):
     """Validate UDP port assignments without modifying configuration files."""
 
@@ -326,7 +342,9 @@ def validate_udp_ports(channels, udp_config):
                     f"Duplicate UDP port {port} assigned to multiple channels"
                 )
 
-            if not is_udp_port_available(config["udp_host"], port):
+            udp_host = config.get("udp_host", udp_config.get("host", "127.0.0.1"))
+
+            if not is_udp_port_available(udp_host, port):
                 raise ValueError(
                     f"UDP port {port} for channel {config['channel_name']} "
                     f"is already in use by another process"
@@ -354,8 +372,10 @@ def validate_udp_ports(channels, udp_config):
     for config in missing_channels:
         port_found = False
 
+        udp_host = config.get("udp_host", udp_config.get("host", "127.0.0.1"))
+
         for port in sorted(available_ports):
-            if is_udp_port_available(config["udp_host"], port):
+            if is_udp_port_available(udp_host, port):
                 available_ports.remove(port)
                 port_found = True
                 break
@@ -796,6 +816,7 @@ if __name__ == "__main__":
 
         channels = load_channel_configs("channels")
         validate_channel_numbers(channels)
+        assign_udp_hosts(channels, master_config["udp"])
         validate_udp_ports(channels, master_config["udp"])
         assign_udp_ports(channels, master_config["udp"])
 

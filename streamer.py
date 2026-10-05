@@ -45,7 +45,6 @@ def load_config(config_file):
         "fallback_station_logo",
         "track_meta_url",
         "icecast_url",
-        "udp_host",
         "udp_port",
         "fallback_metadata",
         "stream"
@@ -869,7 +868,7 @@ def main():
     FALLBACK_STATION_LOGO = config["fallback_station_logo"]
     TRACK_META_URL = config["track_meta_url"]
     ICECAST_URL = config["icecast_url"]
-    UDP_HOST = config["udp_host"]
+    UDP_HOST = config.get("udp_host", "127.0.0.1")
     UDP_PORT = config["udp_port"]
     fallback_metadata = config["fallback_metadata"]
     stream_config = config["stream"]
