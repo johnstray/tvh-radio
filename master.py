@@ -2,6 +2,7 @@ import argparse
 import json
 import logging
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -135,6 +136,17 @@ def validate_master_config(config):
             "Master config 'udp.port_start' must not be greater than 'udp.port_end'"
         )
 
+    if "host" in udp_config:
+        if not isinstance(udp_config["host"], str):
+            raise ValueError(
+                "Master config 'udp.host' must be a string"
+            )
+
+        if not udp_config["host"].strip():
+            raise ValueError(
+                "Master config 'udp.host' must not be empty"
+            )
+
 
 # ------------------------------------------------------------------------------
 # Channel Configuration Management
@@ -162,7 +174,6 @@ def validate_channel_config(config):
         "fallback_station_logo",
         "track_meta_url",
         "icecast_url",
-        "udp_host",
         "fallback_metadata",
     ]
 
@@ -300,6 +311,34 @@ def validate_channel_numbers(channels):
         channel_numbers[channel_number] = channel["channel_name"]
 
 
+def is_udp_port_available(host, port):
+    """Return True if a UDP port is available on the specified host/interface"""
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        try:
+            sock.bind((host, port))
+        except OSError:
+            return False
+
+    return True
+
+
+def assign_udp_hosts(channels, udp_config):
+    """Assign and persist UDP hosts for channels without an explicit host."""
+
+    default_host = udp_config.get("host", "127.0.0.1")
+    assigned_hosts = []
+
+    for config_file, config in channels:
+        if "udp_host" in config:
+            continue
+
+        config["udp_host"] = default_host
+        assigned_hosts.append((config_file, config))
+
+    for config_file, config in assigned_hosts:
+        save_channel_config(config_file, config)
+
+
 def validate_udp_ports(channels, udp_config):
     """Validate UDP port assignments without modifying configuration files."""
 
@@ -314,28 +353,50 @@ def validate_udp_ports(channels, udp_config):
                     f"Duplicate UDP port {port} assigned to multiple channels"
                 )
 
+            udp_host = config.get("udp_host", udp_config.get("host", "127.0.0.1"))
+
+            if not is_udp_port_available(udp_host, port):
+                raise ValueError(
+                    f"UDP port {port} for channel {config['channel_name']} "
+                    f"is already in use by another process"
+                )
+
             used_ports.add(port)
 
     port_start = udp_config["port_start"]
     port_end = udp_config["port_end"]
 
-    available_ports = [
-        port
-        for port in range(port_start, port_end + 1)
-        if port not in used_ports
+    available_ports = set()
+
+    for port in range(port_start, port_end + 1):
+        if port in used_ports:
+            continue
+
+        available_ports.add(port)
+
+    missing_channels = [
+        config
+        for _config_file, config in channels
+        if "udp_port" not in config
     ]
 
-    missing_ports = sum(
-        1
-        for config_file, config in channels
-        if "udp_port" not in config
-    )
+    for config in missing_channels:
+        port_found = False
 
-    if missing_ports > len(available_ports):
-        raise ValueError(
-            f"No available UDP ports for {missing_ports} channel(s) "
-            f"in configured range {port_start}-{port_end}"
-        )
+        udp_host = config.get("udp_host", udp_config.get("host", "127.0.0.1"))
+
+        for port in sorted(available_ports):
+            if is_udp_port_available(udp_host, port):
+                available_ports.remove(port)
+                port_found = True
+                break
+
+        if not port_found:
+            raise ValueError(
+                f"No available UDP port for channel "
+                f"'{config['channel_name']}' in configured range "
+                f"{port_start}-{port_end}"
+            )
 
 
 def validate_configuration(master_config_file, channel_config_directory):
@@ -378,8 +439,16 @@ def assign_udp_ports(channels, udp_config):
         if "udp_port" in config:
             continue
 
-        while next_port <= port_end and next_port in used_ports:
-            next_port += 1
+        while next_port <= port_end:
+            if next_port in used_ports:
+                next_port += 1
+                continue
+
+            if not is_udp_port_available(config["udp_host"], next_port):
+                next_port += 1
+                continue
+
+            break
 
         if next_port > port_end:
             raise ValueError(
@@ -758,8 +827,9 @@ if __name__ == "__main__":
 
         channels = load_channel_configs("channels")
         validate_channel_numbers(channels)
-
-        assign_udp_ports(channels, master_config["udp"],)
+        assign_udp_hosts(channels, master_config["udp"])
+        validate_udp_ports(channels, master_config["udp"])
+        assign_udp_ports(channels, master_config["udp"])
 
     except (OSError, json.JSONDecodeError, ValueError) as error:
         logger.error(f"Configuration error: {error}")

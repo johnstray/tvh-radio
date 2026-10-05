@@ -10,6 +10,7 @@
         "backoff_time": 300
     },
     "udp": {
+        "host": "127.0.0.1",
         "port_start": 1234,
         "port_end": 1333
     }
