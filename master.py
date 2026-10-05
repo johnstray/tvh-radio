@@ -136,6 +136,17 @@ def validate_master_config(config):
             "Master config 'udp.port_start' must not be greater than 'udp.port_end'"
         )
 
+    if "host" in udp_config:
+        if not isinstance(udp_config["host"], str):
+            raise ValueError(
+                "Master config 'udp.host' must be a string"
+            )
+
+        if not udp_config["host"].strip():
+            raise ValueError(
+                "Master config 'udp.host' must not be empty"
+            )
+
 
 # ------------------------------------------------------------------------------
 # Channel Configuration Management
@@ -301,10 +312,10 @@ def validate_channel_numbers(channels):
 
 
 def is_udp_port_available(host, port):
-    """Return True is a UDP port is available on the specified host/interface"""
+    """Return True if a UDP port is available on the specified host/interface"""
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         try:
-            sock.bind((host,port))
+            sock.bind((host, port))
         except OSError:
             return False
 
