@@ -1,7 +1,7 @@
 import pytest
 import requests
 
-from metadata import get_track_identity, get_track_metadata
+from metadata import get_track_identity, get_track_metadata, build_fallback_metadata
 
 
 def test_track_identity():
@@ -173,3 +173,23 @@ def test_get_track_metadata_invalid_json(monkeypatch):
     assert result == "error"
     assert isinstance(data, ValueError)
     assert str(data) == "Invalid JSON response"
+
+
+def test_build_fallback_metadata():
+    """Fallback configuration should map to the expected track format."""
+
+    fallback_config = {
+        "title": "Unknown Title",
+        "artist": "Unknown Artist",
+        "album": "Unknown Album",
+        "image_path": "/images/fallback.png",
+    }
+
+    result = build_fallback_metadata(fallback_config)
+
+    assert result == {
+        "title": "Unknown Title",
+        "artist": "Unknown Artist",
+        "album": "Unknown Album",
+        "imagePath": "/images/fallback.png",
+    }

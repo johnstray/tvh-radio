@@ -9,7 +9,7 @@ from pathlib import Path
 
 import gi
 import requests
-from metadata import get_track_identity, get_track_metadata
+from metadata import get_track_identity, get_track_metadata, build_fallback_metadata
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
 
 gi.require_version("Gst", "1.0")
@@ -424,12 +424,7 @@ def run_image_worker(stop_event):
                     )
 
                     if metadata_empty_count >= stream_config["metadata_empty_threshold"]:
-                        fallback_data = {
-                            "title": fallback_metadata["title"],
-                            "artist": fallback_metadata["artist"],
-                            "album": fallback_metadata["album"],
-                            "imagePath": fallback_metadata["image_path"],
-                        }
+                        fallback_data = build_fallback_metadata(fallback_metadata)
 
                         fallback_identity = get_track_identity(fallback_data)
 
@@ -458,12 +453,7 @@ def run_image_worker(stop_event):
                     logger.error(f"Metadata API unavailable. {data}")
                     metadata_error_active = True
 
-                fallback_data = {
-                    "title": fallback_metadata["title"],
-                    "artist": fallback_metadata["artist"],
-                    "album": fallback_metadata["album"],
-                    "imagePath": fallback_metadata["image_path"],
-                }
+                fallback_data = build_fallback_metadata(fallback_metadata)
 
                 fallback_identity = get_track_identity(fallback_data)
 

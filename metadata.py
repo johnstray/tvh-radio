@@ -30,3 +30,13 @@ def get_track_metadata(url, timeout):
 
     except ValueError as error:
         return error, "error"
+
+
+def build_fallback_metadata(fallback_config):
+    """Convert configured fallback metadata into track metadata format."""
+    return {
+        "title": fallback_config["title"],
+        "artist": fallback_config["artist"],
+        "album": fallback_config["album"],
+        "imagePath": fallback_config["image_path"],
+    }
