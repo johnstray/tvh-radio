@@ -2,6 +2,7 @@ import pytest
 import requests
 
 from metadata import (
+    MetadataFallbackState,
     build_fallback_metadata,
     fallback_threshold_reached,
     get_track_identity,
@@ -214,3 +215,187 @@ def test_fallback_threshold(empty_count, expected):
     """Fallback activates when the empty-response threshold is reached."""
 
     assert fallback_threshold_reached(empty_count, 3) is expected
+
+
+def test_fallback_state_empty_threshold():
+    """Consecutive empty responses should activate fallback at the threshold."""
+
+    state = MetadataFallbackState(empty_threshold=3)
+
+    fallback_data = {
+        "title": "Unknown Title",
+        "artist": "Unknown Artist",
+        "album": "Unknown Album",
+        "imagePath": "",
+    }
+
+    assert state.process("empty", None, fallback_data) is None
+    assert state.empty_count == 1
+    assert state.fallback_active is False
+
+    assert state.process("empty", None, fallback_data) is None
+    assert state.empty_count == 2
+    assert state.fallback_active is False
+
+    assert state.process("empty", None, fallback_data) == fallback_data
+    assert state.empty_count == 3
+    assert state.fallback_active is True
+
+    # Further empty responses should not trigger another fallback.
+    assert state.process("empty", None, fallback_data) is None
+
+
+def test_fallback_state_api_error():
+    """API errors should activate fallback immediately."""
+
+    state = MetadataFallbackState(empty_threshold=3)
+
+    fallback_data = {
+        "title": "Unknown Title",
+        "artist": "Unknown Artist",
+        "album": "Unknown Album",
+        "imagePath": "",
+    }
+
+    result = state.process(
+        "error",
+        requests.ConnectionError("Connection refused"),
+        fallback_data,
+    )
+
+    assert result == fallback_data
+    assert state.empty_count == 0
+    assert state.fallback_active is True
+    assert state.error_active is True
+
+
+def test_fallback_state_api_recovery():
+    """Successful metadata should restore normal operation after an error."""
+
+    state = MetadataFallbackState(empty_threshold=3)
+
+    fallback_data = {
+        "title": "Unknown Title",
+        "artist": "Unknown Artist",
+        "album": "Unknown Album",
+        "imagePath": "",
+    }
+
+    track_data = {
+        "title": "Test Song",
+        "artist": "Test Artist",
+        "album": "Test Album",
+        "imagePath": "https://example.com/artwork.jpg",
+    }
+
+    # Simulate an API failure.
+    state.process(
+        "error",
+        requests.ConnectionError("Connection refused"),
+        fallback_data,
+    )
+
+    assert state.fallback_active is True
+    assert state.error_active is True
+
+    # Simulate the API recovering.
+    result = state.process("success", track_data, fallback_data)
+
+    assert result == track_data
+    assert state.empty_count == 0
+    assert state.fallback_active is False
+    assert state.error_active is False
+
+
+def test_fallback_state_success_resets_empty_count():
+    """Successful metadata should reset consecutive empty responses."""
+
+    state = MetadataFallbackState(empty_threshold=3)
+
+    fallback_data = {"title": "Unknown Title"}
+    track_data = {"title": "Test Song"}
+
+    state.process("empty", None, fallback_data)
+    state.process("empty", None, fallback_data)
+
+    assert state.empty_count == 2
+
+    result = state.process("success", track_data, fallback_data)
+
+    assert result == track_data
+    assert state.empty_count == 0
+    assert state.fallback_active is False
+
+    # A new HTTP 204 sequence starts from zero.
+    result = state.process("empty", None, fallback_data)
+
+    assert result is None
+    assert state.empty_count == 1
+    assert state.fallback_active is False
+
+
+def test_fallback_state_repeated_errors():
+    """Repeated API errors should keep fallback active."""
+
+    state = MetadataFallbackState(empty_threshold=3)
+
+    fallback_data = {"title": "Unknown Title"}
+
+    for _ in range(3):
+        result = state.process(
+            "error",
+            requests.ConnectionError("Connection refused"),
+            fallback_data,
+        )
+
+        assert result == fallback_data
+        assert state.empty_count == 0
+        assert state.fallback_active is True
+        assert state.error_active is True
+
+
+def test_fallback_state_recovery_with_same_metadata():
+    """Successful metadata clears fallback even if its content is unchanged."""
+
+    state = MetadataFallbackState(empty_threshold=3)
+
+    fallback_data = {
+        "title": "Unknown Title",
+        "artist": "Unknown Artist",
+        "album": "Unknown Album",
+        "imagePath": "",
+    }
+
+    state.process("error", requests.ConnectionError(), fallback_data)
+
+    assert state.fallback_active is True
+
+    # The API recovers but returns metadata identical to the fallback.
+    result = state.process("success", fallback_data, fallback_data)
+
+    assert result == fallback_data
+    assert state.fallback_active is False
+    assert state.error_active is False
+
+    # A new sequence of empty responses must start from zero.
+    assert state.process("empty", None, fallback_data) is None
+    assert state.empty_count == 1
+
+
+def test_fallback_state_error_followed_by_empty():
+    """Empty responses should not reactivate an already active fallback."""
+
+    state = MetadataFallbackState(empty_threshold=3)
+
+    fallback_data = {"title": "Unknown Title"}
+
+    state.process("error", requests.ConnectionError(), fallback_data)
+
+    assert state.fallback_active is True
+
+    for _ in range(4):
+        result = state.process("empty", None, fallback_data)
+
+        assert result is None
+        assert state.fallback_active is True
+        assert state.empty_count == 0
