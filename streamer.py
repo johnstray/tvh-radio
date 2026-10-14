@@ -9,6 +9,7 @@ from pathlib import Path
 
 import gi
 import requests
+from metadata import get_track_identity
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
 
 gi.require_version("Gst", "1.0")
@@ -314,10 +315,6 @@ def get_album_artwork(image_path):
         logger.error(f"Error processing generic album artwork: {error}")
 
     return None
-
-def get_track_identity(data):
-    """Return a unique identifier for the track based on its metadata."""
-    return f"{data.get('title', '')}-{data.get('artist', '')}-{data.get('album', '')}-{data.get('imagePath', '')}"
 
 def generate_image(data):
     image_definition = stream_config["image_definition"]
