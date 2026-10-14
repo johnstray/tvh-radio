@@ -1,7 +1,7 @@
 import pytest
 import requests
 
-from metadata import get_track_identity, get_track_metadata, build_fallback_metadata
+from metadata import fallback_threshold_reached, get_track_identity, get_track_metadata, build_fallback_metadata
 
 
 def test_track_identity():
@@ -193,3 +193,19 @@ def test_build_fallback_metadata():
         "album": "Unknown Album",
         "imagePath": "/images/fallback.png",
     }
+
+
+@pytest.mark.parametrize(
+    "empty_count, expected",
+    [
+        (0, False),
+        (1, False),
+        (2, False),
+        (3, True),
+        (4, True),
+    ],
+)
+def test_fallback_threshold(empty_count, expected):
+    """Fallback activates when the empty-response threshold is reached."""
+
+    assert fallback_threshold_reached(empty_count, 3) is expected
