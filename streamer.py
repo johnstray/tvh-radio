@@ -9,7 +9,7 @@ from pathlib import Path
 
 import gi
 import requests
-from metadata import get_track_identity
+from metadata import get_track_identity, get_track_metadata
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
 
 gi.require_version("Gst", "1.0")
@@ -261,24 +261,6 @@ def get_station_logo():
     return None
 
 
-def get_track_metadata():
-    try:
-        response = requests.get(TRACK_META_URL, timeout=stream_config["request_timeout"])
-
-        if response.status_code == 204:
-            return None, "empty"
-
-        response.raise_for_status()
-
-        return response.json(), "success"
-
-    except requests.RequestException as error:
-        return error, "error"
-
-    except ValueError as error:
-        return error, "error"
-
-
 def get_album_artwork(image_path):
     if not image_path:
         return None
@@ -400,7 +382,10 @@ def run_image_worker(stop_event):
 
     while not stop_event.is_set():
         try:
-            data, result = get_track_metadata()
+            data, result = get_track_metadata(
+                TRACK_META_URL,
+                stream_config["request_timeout"],
+            )
 
             if result == "success":
                 metadata_empty_count = 0
