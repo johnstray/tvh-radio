@@ -1,4 +1,5 @@
 import json
+
 import pytest
 
 from master import load_channel_configs, load_master_config

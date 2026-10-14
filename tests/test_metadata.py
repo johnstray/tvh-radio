@@ -1,7 +1,12 @@
 import pytest
 import requests
 
-from metadata import fallback_threshold_reached, get_track_identity, get_track_metadata, build_fallback_metadata
+from metadata import (
+    build_fallback_metadata,
+    fallback_threshold_reached,
+    get_track_identity,
+    get_track_metadata,
+)
 
 
 def test_track_identity():

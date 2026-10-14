@@ -9,8 +9,14 @@ from pathlib import Path
 
 import gi
 import requests
-from metadata import fallback_threshold_reached, get_track_identity, get_track_metadata, build_fallback_metadata
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
+
+from metadata import (
+    build_fallback_metadata,
+    fallback_threshold_reached,
+    get_track_identity,
+    get_track_metadata,
+)
 
 gi.require_version("Gst", "1.0")
 from gi.repository import GLib, Gst
