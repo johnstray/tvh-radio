@@ -1,7 +1,7 @@
 import json
 import pytest
 
-from master import load_channel_configs
+from master import load_channel_configs, load_master_config
 
 
 def test_load_single_channel_config(tmp_path, valid_channel_config):
@@ -139,3 +139,90 @@ def test_load_channel_invalid_type_reports_filename(
         match=r"invalid_fallback\.json.*fallback_metadata",
     ):
         load_channel_configs(tmp_path)
+
+
+def test_load_ignores_non_json_files(tmp_path, valid_channel_config):
+    """Only JSON channel configuration files should be loaded."""
+
+    # Create one valid channel configuration.
+    config_file = tmp_path / "radio.json"
+    config_file.write_text(
+        json.dumps(valid_channel_config),
+        encoding="utf-8",
+    )
+
+    # Create files that should be ignored.
+    (tmp_path / "README.md").write_text("Channel configurations")
+    (tmp_path / "radio.json.bak").write_text("Not valid JSON")
+    (tmp_path / "radio.json.tmp").write_text("Not valid JSON")
+    (tmp_path / "notes.txt").write_text("Not valid JSON")
+
+    channels = load_channel_configs(tmp_path)
+
+    assert len(channels) == 1
+    assert channels[0][0] == config_file
+
+
+def test_load_ignores_subdirectories(tmp_path, valid_channel_config):
+    """Channel discovery should not search subdirectories recursively."""
+
+    subdirectory = tmp_path / "backups"
+    subdirectory.mkdir()
+
+    config_file = subdirectory / "old_radio.json"
+    config_file.write_text(
+        json.dumps(valid_channel_config),
+        encoding="utf-8",
+    )
+
+    channels = load_channel_configs(tmp_path)
+
+    assert channels == []
+
+
+def test_load_master_config(tmp_path):
+    """A valid master configuration should load correctly."""
+
+    config = {
+        "playlist": {
+            "output": "playlist.m3u8",
+            "starting_channel_number": 900,
+        },
+        "restart": {
+            "limit": 3,
+            "window": 60,
+            "reset_time": 300,
+            "backoff_time": 30,
+        },
+        "udp": {
+            "host": "127.0.0.1",
+            "port_start": 5000,
+            "port_end": 5100,
+        },
+    }
+
+    config_file = tmp_path / "master.json"
+    config_file.write_text(json.dumps(config), encoding="utf-8")
+
+    loaded_config = load_master_config(config_file)
+
+    assert loaded_config == config
+
+
+def test_load_malformed_master_config(tmp_path):
+    """Malformed master JSON should raise a decoding error."""
+
+    config_file = tmp_path / "master.json"
+    config_file.write_text('{"playlist":', encoding="utf-8")
+
+    with pytest.raises(json.JSONDecodeError):
+        load_master_config(config_file)
+
+
+def test_load_missing_master_config(tmp_path):
+    """A missing master configuration file should raise FileNotFoundError."""
+
+    config_file = tmp_path / "missing.json"
+
+    with pytest.raises(FileNotFoundError):
+        load_master_config(config_file)
