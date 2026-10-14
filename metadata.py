@@ -45,3 +45,44 @@ def build_fallback_metadata(fallback_config):
 def fallback_threshold_reached(empty_count, threshold):
     """Return True when consecutive empty responses reach the threshold."""
     return empty_count >= threshold
+
+
+class MetadataFallbackState:
+    """Track metadata availability and decide when fallback is needed."""
+
+    def __init__(self, empty_threshold):
+        self.empty_threshold = empty_threshold
+        self.empty_count = 0
+        self.fallback_active = False
+        self.error_active = False
+
+    def process(self, result, data, fallback_data):
+        """Return metadata to display, or None to keep the current image."""
+
+        if result == "success":
+            self.empty_count = 0
+            self.error_active = False
+            self.fallback_active = False
+            return data
+
+        if result == "empty":
+            if self.fallback_active:
+                return None
+
+            self.empty_count += 1
+
+            if fallback_threshold_reached(
+                self.empty_count, self.empty_threshold
+            ):
+                self.fallback_active = True
+                return fallback_data
+
+            return None
+
+        if result == "error":
+            self.empty_count = 0
+            self.error_active = True
+            self.fallback_active = True
+            return fallback_data
+
+        raise ValueError(f"Unknown metadata result: {result}")

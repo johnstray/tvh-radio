@@ -12,8 +12,8 @@ import requests
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
 
 from metadata import (
+    MetadataFallbackState,
     build_fallback_metadata,
-    fallback_threshold_reached,
     get_track_identity,
     get_track_metadata,
 )
@@ -377,9 +377,12 @@ def run_image_worker(stop_event):
     global current_image
 
     previous_track = None
-    metadata_empty_count = 0
-    fallback_active = False
-    metadata_error_active = False
+
+    metadata_state = MetadataFallbackState(
+        empty_threshold=stream_config["metadata_empty_threshold"]
+    )
+
+    fallback_data = build_fallback_metadata(fallback_metadata)
 
     logger.info(
         f"Now playing image generator started. - "
@@ -393,96 +396,57 @@ def run_image_worker(stop_event):
                 stream_config["request_timeout"],
             )
 
+            was_error_active = metadata_state.error_active
+            was_fallback_active = metadata_state.fallback_active
+
+            display_data = metadata_state.process(
+                result,
+                data,
+                fallback_data,
+            )
+
             if result == "success":
-                metadata_empty_count = 0
-
-                if metadata_error_active:
+                if was_error_active:
                     logger.info("Metadata API recovered.")
-                    metadata_error_active = False
 
-                track_identity = get_track_identity(data)
+            elif result == "empty":
+                if not was_fallback_active:
+                    logger.warning(
+                        f"Metadata API returned HTTP 204 "
+                        f"({metadata_state.empty_count}/"
+                        f"{stream_config['metadata_empty_threshold']})"
+                    )
+
+            else:
+                if not was_error_active:
+                    logger.error(f"Metadata API unavailable. {data}")
+
+            if display_data is not None:
+                track_identity = get_track_identity(display_data)
 
                 if track_identity != previous_track:
-                    logger.info("Track metadata changed. Generating new image.")
-                    logger.info(f"Track: {data.get('title')} - {data.get('artist')} - {data.get('album')}")
+                    if metadata_state.fallback_active:
+                        logger.warning("Generating fallback image.")
+                    else:
+                        logger.info("Track metadata changed. Generating new image.")
+                        logger.info(
+                            f"Track: {display_data.get('title')} - "
+                            f"{display_data.get('artist')} - "
+                            f"{display_data.get('album')}"
+                        )
 
-                    image = generate_image(data)
+                    image = generate_image(display_data)
                     jpeg_data = encode_image(image)
 
                     with image_lock:
                         current_image = jpeg_data
 
                     previous_track = track_identity
-                    fallback_active = False
 
                     logger.info(
                         f"Image generated and stored in memory. "
                         f"Size: {len(jpeg_data)} bytes"
                     )
-
-            elif result == "empty":
-                if not fallback_active:
-                    metadata_empty_count += 1
-
-                    logger.warning(
-                        f"Metadata API returned HTTP 204 "
-                        f"({metadata_empty_count}/{stream_config["metadata_empty_threshold"]})"
-                    )
-
-                    if fallback_threshold_reached(
-                        metadata_empty_count,
-                        stream_config["metadata_empty_threshold"],
-                    ):
-                        fallback_data = build_fallback_metadata(fallback_metadata)
-
-                        fallback_identity = get_track_identity(fallback_data)
-
-                        if fallback_identity != previous_track:
-                            logger.warning("Metadata unavailable. Generating fallback image.")
-
-                            image = generate_image(fallback_data)
-                            jpeg_data = encode_image(image)
-
-                            with image_lock:
-                                current_image = jpeg_data
-
-                            previous_track = fallback_identity
-
-                            logger.info(
-                                f"Fallback image generated and stored in memory. "
-                                f"Size: {len(jpeg_data)} bytes"
-                            )
-
-                        fallback_active = True
-
-            else:
-                metadata_empty_count = 0
-
-                if not metadata_error_active:
-                    logger.error(f"Metadata API unavailable. {data}")
-                    metadata_error_active = True
-
-                fallback_data = build_fallback_metadata(fallback_metadata)
-
-                fallback_identity = get_track_identity(fallback_data)
-
-                if fallback_identity != previous_track:
-                    logger.warning("Generating fallback image.")
-
-                    image = generate_image(fallback_data)
-                    jpeg_data = encode_image(image)
-
-                    with image_lock:
-                        current_image = jpeg_data
-
-                    previous_track = fallback_identity
-
-                    logger.info(
-                        f"Fallback image generated and stored in memory. "
-                        f"Size: {len(jpeg_data)} bytes"
-                    )
-
-                fallback_active = True
 
         except Exception as error:
             logger.error(f"Error generating image: {error}")
