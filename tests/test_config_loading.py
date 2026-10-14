@@ -119,3 +119,23 @@ def test_load_mixed_valid_and_invalid_configs(
         match=r"beta\.json.*station_name",
     ):
         load_channel_configs(tmp_path)
+
+
+def test_load_channel_invalid_type_reports_filename(
+    tmp_path, valid_channel_config
+):
+    """Configuration type errors should identify the offending file."""
+
+    valid_channel_config["fallback_metadata"] = None
+
+    config_file = tmp_path / "invalid_fallback.json"
+    config_file.write_text(
+        json.dumps(valid_channel_config),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"invalid_fallback\.json.*fallback_metadata",
+    ):
+        load_channel_configs(tmp_path)
