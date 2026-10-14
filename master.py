@@ -279,7 +279,7 @@ def load_channel_configs(config_directory):
         try:
             config = load_channel_config(config_file)
             validate_channel_config(config)
-        except (OSError, json.JSONDecodeError, ValueError) as error:
+        except (OSError, json.JSONDecodeError, ValueError, TypeError) as error:
             raise ValueError(
                 f"{config_file}: {error}"
             ) from error
