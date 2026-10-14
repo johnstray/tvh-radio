@@ -9,7 +9,7 @@ from pathlib import Path
 
 import gi
 import requests
-from metadata import get_track_identity, get_track_metadata, build_fallback_metadata
+from metadata import fallback_threshold_reached, get_track_identity, get_track_metadata, build_fallback_metadata
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
 
 gi.require_version("Gst", "1.0")
@@ -423,7 +423,10 @@ def run_image_worker(stop_event):
                         f"({metadata_empty_count}/{stream_config["metadata_empty_threshold"]})"
                     )
 
-                    if metadata_empty_count >= stream_config["metadata_empty_threshold"]:
+                    if fallback_threshold_reached(
+                        metadata_empty_count,
+                        stream_config["metadata_empty_threshold"],
+                    ):
                         fallback_data = build_fallback_metadata(fallback_metadata)
 
                         fallback_identity = get_track_identity(fallback_data)

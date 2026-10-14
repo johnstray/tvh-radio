@@ -40,3 +40,8 @@ def build_fallback_metadata(fallback_config):
         "album": fallback_config["album"],
         "imagePath": fallback_config["image_path"],
     }
+
+
+def fallback_threshold_reached(empty_count, threshold):
+    """Return True when consecutive empty responses reach the threshold."""
+    return empty_count >= threshold
