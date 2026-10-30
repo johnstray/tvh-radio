@@ -908,3 +908,54 @@ def test_start_channels_starts_all_configured_channels(monkeypatch, tmp_path):
         assert channel["stopping"] is False
         assert channel["state"] == "running"
         assert channel["failure_times"] == []
+
+
+def test_start_channel_propagates_launch_failure(monkeypatch, tmp_path):
+    """A failed subprocess launch reports the error to its caller."""
+
+    channel = master.create_channel_state(
+        tmp_path / "test-channel.json",
+        {"channel_name": "test-channel"},
+    )
+
+    def fake_popen(*args, **kwargs):
+        raise OSError("Unable to launch streamer")
+
+    monkeypatch.setattr(master.subprocess, "Popen", fake_popen)
+
+    with pytest.raises(OSError, match="Unable to launch streamer"):
+        master.start_channel(channel)
+
+    assert channel["process"] is None
+
+
+def test_start_channels_stops_after_launch_failure(monkeypatch, tmp_path):
+    """A launch failure prevents subsequent channels from starting."""
+
+    channels = [
+        (
+            tmp_path / f"channel-{name}.json",
+            {"channel_name": f"channel-{name}"},
+        )
+        for name in ("a", "b", "c")
+    ]
+
+    attempted = []
+
+    class FakeProcess:
+        pid = 12345
+
+    def fake_start_channel(channel):
+        attempted.append(channel["channel_name"])
+
+        if channel["channel_name"] == "channel-b":
+            raise OSError("Unable to launch channel-b")
+
+        channel["process"] = FakeProcess()
+
+    monkeypatch.setattr(master, "start_channel", fake_start_channel)
+
+    with pytest.raises(OSError, match="Unable to launch channel-b"):
+        master.start_channels(channels)
+
+    assert attempted == ["channel-a", "channel-b"]
