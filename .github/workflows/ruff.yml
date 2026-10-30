@@ -4,10 +4,11 @@ on:
   push:
     branches:
       - main
-      - github-workflows
+      - development
   pull_request:
     branches:
       - main
+      - development
   workflow_dispatch:
 
 permissions:

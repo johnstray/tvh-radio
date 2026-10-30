@@ -40,6 +40,7 @@ Turn almost any iHeartRadio internet radio stream into TVHeadend-compatible live
   - [Display and presentation](#display-and-presentation)
   - [Code quality and maintainability](#code-quality-and-maintainability)
 - [Contributing](#contributing)
+  - [Testing](#testing)
   - [Top contributors:](#top-contributors)
   - [Code of Conduct](#code-of-conduct)
 - [FAQ](#faq)
@@ -317,6 +318,21 @@ Contributions are welcome.
 Before making a significant change, check the existing issues and documentation to see whether the work is already planned.
 
 Please keep the separation between `master.py` and `streamer.py` in mind: the master is responsible for orchestration and process management, while channel-specific streaming functionality belongs in the streamer.
+
+### Testing
+
+`tvh-radio` includes automated tests using pytest.
+
+Install the development dependencies and run the test suite from the repository root:
+
+```bash
+python -m pip install -r requirements-dev.txt
+python -m pytest -q
+```
+
+The tests cover configuration validation, UDP allocation, playlist generation, metadata handling and master process management.
+
+See the [Development Guide](docs/development.md#automated-testing) for test organisation, running individual tests and manual integration testing.
 
 See [Development][development] for the development workflow and testing guidance.
 
