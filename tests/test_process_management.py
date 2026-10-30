@@ -3,58 +3,39 @@ import pytest
 import master
 
 
-def test_restart_loop_without_previous_restart():
-    """A channel with no restart history is not in a restart loop."""
+def test_restart_loop_without_failures():
+    """A channel with no failure history is not in a restart loop."""
 
-    channel = {
-        "restart_count": 0,
-        "last_restart": None,
-    }
-
-    restart_config = {
-        "limit": 3,
-        "window": 60,
-    }
+    channel = {"failure_times": []}
+    restart_config = {"limit": 3, "window": 60}
 
     assert master.is_restart_loop(channel, restart_config) is False
 
 
 @pytest.mark.parametrize(
-    "restart_count, elapsed, expected",
+    "failure_times, expected_remaining, expected",
     [
-        (1, 10, False),
-        (2, 10, False),
-        (3, 10, True),
-        (4, 10, True),
-        (3, 60, True),
-        (3, 61, False),
-        (4, 120, False),
+        ([], [], False),
+        ([990], [990], False),
+        ([980, 990], [980, 990], False),
+        ([970, 980, 990], [970, 980, 990], True),
+        ([940, 970, 990], [940, 970, 990], True),
+        ([939, 970, 990], [970, 990], False),
+        ([900, 920, 990], [990], False),
     ],
 )
 def test_restart_loop_detection(
-    monkeypatch, restart_count, elapsed, expected
+    monkeypatch, failure_times, expected_remaining, expected
 ):
-    """Restart-loop detection respects the restart limit and time window."""
+    """Only failures inside the rolling window count towards backoff."""
 
-    current_time = 1000
+    monkeypatch.setattr(master.time, "monotonic", lambda: 1000)
 
-    monkeypatch.setattr(
-        master.time,
-        "monotonic",
-        lambda: current_time,
-    )
-
-    channel = {
-        "restart_count": restart_count,
-        "last_restart": current_time - elapsed,
-    }
-
-    restart_config = {
-        "limit": 3,
-        "window": 60,
-    }
+    channel = {"failure_times": failure_times.copy()}
+    restart_config = {"limit": 3, "window": 60}
 
     assert master.is_restart_loop(channel, restart_config) is expected
+    assert channel["failure_times"] == expected_remaining
 
 
 @pytest.mark.parametrize(
@@ -133,7 +114,7 @@ def test_create_channel_state(tmp_path):
         "config_file": config_file,
         "process": None,
         "stopping": False,
-        "restart_count": 0,
+        "failure_times": [],
         "last_restart": None,
         "state": "running",
         "next_restart": None,
@@ -153,10 +134,10 @@ def test_create_channel_states_are_independent(tmp_path):
         {"channel_name": "channel-b"},
     )
 
-    channel_a["restart_count"] = 5
+    channel_a["failure_times"].append(1000)
     channel_a["state"] = "backoff"
 
-    assert channel_b["restart_count"] == 0
+    assert channel_b["failure_times"] == []
     assert channel_b["state"] == "running"
 
 
@@ -183,13 +164,13 @@ def test_restart_channel_updates_state(monkeypatch, tmp_path):
 
     master.restart_channel(channel)
 
-    assert channel["restart_count"] == 1
+    assert channel["failure_times"] == []
     assert channel["last_restart"] == 1000
     assert channel["process"].pid == 12345
     assert started_channels == [channel]
 
 
-def test_restart_channel_increments_existing_count(monkeypatch, tmp_path):
+def test_restart_channel_preserves_failure_history(monkeypatch, tmp_path):
     """Repeated restarts preserve and increment the restart counter."""
 
     channel = master.create_channel_state(
@@ -197,7 +178,7 @@ def test_restart_channel_increments_existing_count(monkeypatch, tmp_path):
         {"channel_name": "test-channel"},
     )
 
-    channel["restart_count"] = 2
+    channel["failure_times"] = [400, 500]
     channel["last_restart"] = 500
 
     monkeypatch.setattr(master.time, "monotonic", lambda: 1000)
@@ -212,7 +193,7 @@ def test_restart_channel_increments_existing_count(monkeypatch, tmp_path):
 
     master.restart_channel(channel)
 
-    assert channel["restart_count"] == 3
+    assert channel["failure_times"] == [400, 500]
     assert channel["last_restart"] == 1000
 
 
@@ -302,7 +283,7 @@ def test_monitor_restarts_failed_channel(monkeypatch, tmp_path):
 
     assert started_channels == [channel]
     assert channel["process"] is replacement_process
-    assert channel["restart_count"] == 1
+    assert channel["failure_times"] == [1000]
     assert channel["last_restart"] == 1000
     assert channel["state"] == "running"
     assert channel["next_restart"] is None
@@ -326,7 +307,7 @@ def test_monitor_enters_backoff_after_repeated_failures(monkeypatch, tmp_path):
     channel["process"] = FakeProcess()
 
     # Simulate three recent restarts.
-    channel["restart_count"] = 3
+    channel["failure_times"] = [990, 995]
     channel["last_restart"] = 995
 
     processes = {"test-channel": channel}
@@ -358,7 +339,7 @@ def test_monitor_enters_backoff_after_repeated_failures(monkeypatch, tmp_path):
     assert started_channels == []
     assert channel["state"] == "backoff"
     assert channel["next_restart"] == 1030
-    assert channel["restart_count"] == 3
+    assert channel["failure_times"] == [990, 995, 1000]
     assert channel["last_restart"] == 995
     assert processes["test-channel"] is channel
 
@@ -384,7 +365,7 @@ def test_monitor_restarts_channel_after_backoff(monkeypatch, tmp_path):
 
     channel["process"] = failed_process
     channel["state"] = "backoff"
-    channel["restart_count"] = 3
+    channel["failure_times"] = [940, 945, 950]
     channel["last_restart"] = 950
     channel["next_restart"] = 1000
 
@@ -418,7 +399,7 @@ def test_monitor_restarts_channel_after_backoff(monkeypatch, tmp_path):
     assert started_channels == [channel]
     assert channel["process"] is replacement_process
     assert channel["state"] == "running"
-    assert channel["restart_count"] == 1
+    assert channel["failure_times"] == []
     assert channel["last_restart"] == 1000
     assert channel["next_restart"] is None
     assert processes["test-channel"] is channel
@@ -442,7 +423,7 @@ def test_monitor_waits_until_backoff_expires(monkeypatch, tmp_path):
 
     channel["process"] = failed_process
     channel["state"] = "backoff"
-    channel["restart_count"] = 3
+    channel["failure_times"] = [940, 945, 950]
     channel["last_restart"] = 950
     channel["next_restart"] = 1030
 
@@ -475,7 +456,7 @@ def test_monitor_waits_until_backoff_expires(monkeypatch, tmp_path):
     assert started_channels == []
     assert channel["process"] is failed_process
     assert channel["state"] == "backoff"
-    assert channel["restart_count"] == 3
+    assert channel["failure_times"] == [940, 945, 950]
     assert channel["last_restart"] == 950
     assert channel["next_restart"] == 1030
     assert processes["test-channel"] is channel
@@ -540,17 +521,17 @@ def test_monitor_removes_intentionally_stopped_channel(
 
 
 @pytest.mark.parametrize(
-    "elapsed, expected_count, expected_last_restart",
+    "elapsed, expected_failures",
     [
-        (299, 2, 701),
-        (300, 0, None),
-        (301, 0, None),
+        (299, [690, 695]),
+        (300, []),
+        (301, []),
     ],
 )
 def test_monitor_resets_restart_history_after_healthy_period(
-    monkeypatch, tmp_path, elapsed, expected_count, expected_last_restart
+    monkeypatch, tmp_path, elapsed, expected_failures
 ):
-    """A running channel's restart history resets after the configured interval."""
+    """A running process clears failure history after the reset interval."""
 
     channel = master.create_channel_state(
         tmp_path / "test-channel.json",
@@ -558,13 +539,11 @@ def test_monitor_resets_restart_history_after_healthy_period(
     )
 
     class FakeProcess:
-        returncode = None
-
         def poll(self):
             return None
 
     channel["process"] = FakeProcess()
-    channel["restart_count"] = 2
+    channel["failure_times"] = [690, 695]
     channel["last_restart"] = 1000 - elapsed
 
     processes = {"test-channel": channel}
@@ -575,11 +554,7 @@ def test_monitor_resets_restart_history_after_healthy_period(
     def stop_after_first_iteration(seconds):
         master.shutdown_requested = True
 
-    monkeypatch.setattr(
-        master.time,
-        "sleep",
-        stop_after_first_iteration,
-    )
+    monkeypatch.setattr(master.time, "sleep", stop_after_first_iteration)
 
     restart_config = {
         "limit": 3,
@@ -590,13 +565,13 @@ def test_monitor_resets_restart_history_after_healthy_period(
 
     master.monitor_channels(processes, restart_config)
 
-    assert channel["restart_count"] == expected_count
-    assert channel["last_restart"] == expected_last_restart
+    assert channel["failure_times"] == expected_failures
+    assert channel["last_restart"] == 1000 - elapsed
     assert channel["state"] == "running"
     assert processes["test-channel"] is channel
 
 
-def test_monitor_resets_history_before_restarting_failed_channel(
+def test_monitor_prunes_old_failures_when_process_exits(
     monkeypatch, tmp_path
 ):
     """An exited channel beyond the reset interval starts fresh restart history."""
@@ -615,7 +590,7 @@ def test_monitor_resets_history_before_restarting_failed_channel(
             return self.returncode
 
     channel["process"] = FakeProcess(pid=1001, returncode=1)
-    channel["restart_count"] = 2
+    channel["failure_times"] = [690, 695]
     channel["last_restart"] = 700
 
     processes = {"test-channel": channel}
@@ -652,7 +627,61 @@ def test_monitor_resets_history_before_restarting_failed_channel(
 
     assert started_channels == [channel]
     assert channel["process"] is replacement_process
-    assert channel["restart_count"] == 1
+    assert channel["failure_times"] == [1000]
     assert channel["last_restart"] == 1000
     assert channel["state"] == "running"
     assert processes["test-channel"] is channel
+
+
+def test_monitor_ignores_failures_outside_rolling_window(
+    monkeypatch, tmp_path
+):
+    """Old failures do not cause a new crash to trigger backoff."""
+
+    channel = master.create_channel_state(
+        tmp_path / "test-channel.json",
+        {"channel_name": "test-channel"},
+    )
+
+    class FakeProcess:
+        def __init__(self, pid, returncode=None):
+            self.pid = pid
+            self.returncode = returncode
+
+        def poll(self):
+            return self.returncode
+
+    channel["process"] = FakeProcess(1001, returncode=1)
+    channel["failure_times"] = [900, 950]
+    channel["last_restart"] = 950
+
+    processes = {"test-channel": channel}
+
+    monkeypatch.setattr(master, "shutdown_requested", False)
+    monkeypatch.setattr(master.time, "monotonic", lambda: 1000)
+
+    replacement_process = FakeProcess(1002)
+
+    def fake_start_channel(channel_state):
+        channel_state["process"] = replacement_process
+
+    monkeypatch.setattr(master, "start_channel", fake_start_channel)
+
+    def stop_after_first_iteration(seconds):
+        master.shutdown_requested = True
+
+    monkeypatch.setattr(master.time, "sleep", stop_after_first_iteration)
+
+    restart_config = {
+        "limit": 3,
+        "window": 60,
+        "reset_time": 300,
+        "backoff_time": 30,
+    }
+
+    master.monitor_channels(processes, restart_config)
+
+    assert channel["failure_times"] == [950, 1000]
+    assert channel["process"] is replacement_process
+    assert channel["state"] == "running"
+    assert channel["next_restart"] is None
