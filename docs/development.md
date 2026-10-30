@@ -390,7 +390,7 @@ git diff
 
 Automated tests establish confidence in the covered behaviour, but passing tests do not guarantee that live GStreamer pipelines or external services will work correctly.
 
-## Manual Testing changes
+## Manual testing
 
 Testing should be performed incrementally.
 
