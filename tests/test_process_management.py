@@ -685,3 +685,226 @@ def test_monitor_ignores_failures_outside_rolling_window(
     assert channel["process"] is replacement_process
     assert channel["state"] == "running"
     assert channel["next_restart"] is None
+
+
+def test_shutdown_channels_terminates_all_processes(tmp_path):
+    """Shutdown marks every channel as stopping and requests termination."""
+
+    class FakeProcess:
+        def __init__(self):
+            self.terminate_calls = 0
+
+        def terminate(self):
+            self.terminate_calls += 1
+
+    processes = {}
+
+    for name in ("channel-a", "channel-b"):
+        channel = master.create_channel_state(
+            tmp_path / f"{name}.json",
+            {"channel_name": name},
+        )
+        channel["process"] = FakeProcess()
+        processes[name] = channel
+
+    master.shutdown_channels(processes)
+
+    for channel in processes.values():
+        assert channel["stopping"] is True
+        assert channel["process"].terminate_calls == 1
+
+
+def test_wait_for_channels_waits_for_all_processes(tmp_path):
+    """The master waits for each channel process to finish."""
+
+    wait_order = []
+
+    class FakeProcess:
+        def __init__(self, name):
+            self.name = name
+
+        def wait(self):
+            wait_order.append(self.name)
+            return 0
+
+    processes = {}
+
+    for name in ("channel-a", "channel-b"):
+        channel = master.create_channel_state(
+            tmp_path / f"{name}.json",
+            {"channel_name": name},
+        )
+        channel["process"] = FakeProcess(name)
+        processes[name] = channel
+
+    master.wait_for_channels(processes)
+
+    assert wait_order == ["channel-a", "channel-b"]
+
+
+def test_start_channel_creates_subprocess(monkeypatch, tmp_path):
+    """A channel starts a streamer with the expected subprocess settings."""
+
+    channel = master.create_channel_state(
+        tmp_path / "test-channel.json",
+        {"channel_name": "test-channel"},
+    )
+
+    popen_calls = []
+
+    class FakeProcess:
+        pid = 12345
+
+    fake_process = FakeProcess()
+
+    def fake_popen(*args, **kwargs):
+        popen_calls.append((args, kwargs))
+        return fake_process
+
+    monkeypatch.setattr(master.subprocess, "Popen", fake_popen)
+
+    class FakeThread:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(master.threading, "Thread", FakeThread)
+
+    master.start_channel(channel)
+
+    assert channel["process"] is fake_process
+    assert len(popen_calls) == 1
+
+    args, kwargs = popen_calls[0]
+
+    assert args == (
+        [
+            master.sys.executable,
+            "streamer.py",
+            str(channel["config_file"]),
+        ],
+    )
+
+    assert kwargs == {
+        "stdout": master.subprocess.PIPE,
+        "stderr": master.subprocess.STDOUT,
+        "text": True,
+        "bufsize": 1,
+        "start_new_session": True,
+    }
+
+
+def test_start_channel_creates_output_thread(monkeypatch, tmp_path):
+    """Starting a streamer creates a daemon thread to forward its output."""
+
+    channel = master.create_channel_state(
+        tmp_path / "test-channel.json",
+        {"channel_name": "test-channel"},
+    )
+
+    class FakeProcess:
+        pid = 12345
+
+    monkeypatch.setattr(
+        master.subprocess,
+        "Popen",
+        lambda *args, **kwargs: FakeProcess(),
+    )
+
+    created_threads = []
+
+    class FakeThread:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.started = False
+            created_threads.append(self)
+
+        def start(self):
+            self.started = True
+
+    monkeypatch.setattr(master.threading, "Thread", FakeThread)
+
+    master.start_channel(channel)
+
+    assert len(created_threads) == 1
+
+    output_thread = created_threads[0]
+
+    assert output_thread.kwargs["target"] is master.read_channel_output
+    assert output_thread.kwargs["args"] == (channel,)
+    assert output_thread.kwargs["daemon"] is True
+    assert output_thread.started is True
+
+
+def test_read_channel_output(capsys):
+    """Streamer output is forwarded to the master's standard output."""
+
+    from io import StringIO
+
+    class FakeProcess:
+        stdout = StringIO(
+            "Streamer started\n"
+            "Metadata updated\n"
+            "Streamer stopped\n"
+        )
+
+    channel = {
+        "process": FakeProcess(),
+    }
+
+    master.read_channel_output(channel)
+
+    captured = capsys.readouterr()
+
+    assert captured.out == (
+        "Streamer started\n"
+        "Metadata updated\n"
+        "Streamer stopped\n"
+    )
+    assert captured.err == ""
+
+
+def test_start_channels_starts_all_configured_channels(monkeypatch, tmp_path):
+    """Every configured channel is started and registered with the master."""
+
+    channels = [
+        (
+            tmp_path / "channel-a.json",
+            {"channel_name": "channel-a"},
+        ),
+        (
+            tmp_path / "channel-b.json",
+            {"channel_name": "channel-b"},
+        ),
+    ]
+
+    started_channels = []
+
+    class FakeProcess:
+        def __init__(self, pid):
+            self.pid = pid
+
+    def fake_start_channel(channel):
+        started_channels.append(channel["channel_name"])
+        channel["process"] = FakeProcess(1000 + len(started_channels))
+
+    monkeypatch.setattr(master, "start_channel", fake_start_channel)
+
+    processes = master.start_channels(channels)
+
+    assert started_channels == ["channel-a", "channel-b"]
+    assert set(processes) == {"channel-a", "channel-b"}
+
+    assert processes["channel-a"]["process"].pid == 1001
+    assert processes["channel-b"]["process"].pid == 1002
+
+    for config_file, config in channels:
+        channel = processes[config["channel_name"]]
+
+        assert channel["config_file"] == config_file
+        assert channel["config"] is config
+        assert channel["stopping"] is False
+        assert channel["state"] == "running"
+        assert channel["failure_times"] == []
