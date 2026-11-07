@@ -19,7 +19,8 @@ from metadata import (
 )
 
 gi.require_version("Gst", "1.0")
-from gi.repository import GLib, Gst
+gi.require_version("GstApp", "1.0")
+from gi.repository import GLib, Gst, GstApp
 
 logger = logging.getLogger("tvh-radio")
 
@@ -509,6 +510,7 @@ def create_pipeline():
     videocaps = Gst.ElementFactory.make("capsfilter", "video-caps")
     x264enc = Gst.ElementFactory.make("x264enc", "h264-encoder")
     h264parse = Gst.ElementFactory.make("h264parse", "h264-parser")
+    video_mux_queue = Gst.ElementFactory.make("queue", "video-mux-queue")
 
     source = Gst.ElementFactory.make("uridecodebin3", "icecast-source")
     audio_queue = Gst.ElementFactory.make("queue", "audio_queue")
@@ -517,14 +519,28 @@ def create_pipeline():
     audiocaps = Gst.ElementFactory.make("capsfilter", "audio-caps")
     avenc_aac = Gst.ElementFactory.make("avenc_aac", "aac-encoder")
     aacparse = Gst.ElementFactory.make("aacparse", "aac-parser")
+    audio_mux_queue = Gst.ElementFactory.make("queue", "audio-mux-queue")
+
+    # Continuous silent audio keeps the MPEG-TS muxer supplied during outages.
+    silence_source = Gst.ElementFactory.make("audiotestsrc", "silence-source")
+    silence_caps = Gst.ElementFactory.make("capsfilter", "silence-caps")
+    silence_queue = Gst.ElementFactory.make("queue", "silence-queue")
+    audio_mixer = Gst.ElementFactory.make_with_properties(
+        "audiomixer",
+        ["name", "force-live"],
+        ["audio-mixer", True],
+    )
 
     mpegtsmux = Gst.ElementFactory.make("mpegtsmux", "mpegts-mux")
     udpsink = Gst.ElementFactory.make("udpsink", "udp-sink")
 
     elements = [
-        appsrc, jpegdec, videoconvert, videoscale, videocaps, x264enc, h264parse,
-        source, audio_queue, audioconvert, audioresample, audiocaps, avenc_aac,
-        aacparse, mpegtsmux, udpsink,
+        appsrc, jpegdec, videoconvert, videoscale, videocaps,
+        x264enc, h264parse, video_mux_queue,
+        source, audio_queue, audioconvert, audioresample, audiocaps,
+        silence_source, silence_caps, silence_queue, audio_mixer,
+        avenc_aac, aacparse, audio_mux_queue,
+        mpegtsmux, udpsink,
     ]
     if any(element is None for element in elements):
         raise RuntimeError("Unable to create one or more GStreamer elements")
@@ -534,8 +550,14 @@ def create_pipeline():
 
     appsrc.set_property("format", Gst.Format.TIME)
     appsrc.set_property("is-live", True)
-    appsrc.set_property("block", True)
+    appsrc.set_property("block", False)
     appsrc.set_property("do-timestamp", True)
+
+    # Keep the live video source responsive if downstream processing stalls.
+    # Drop older queued frames instead of blocking the GLib main loop.
+    appsrc.set_property("max-buffers", 5)
+    appsrc.set_property("max-bytes", 0)
+    appsrc.set_property("leaky-type", GstApp.AppLeakyType.DOWNSTREAM)
     appsrc.set_property(
         "caps", Gst.Caps.from_string(f"image/jpeg,framerate={stream_config['video_fps']}/1")
     )
@@ -562,7 +584,18 @@ def create_pipeline():
     audiocaps.set_property(
         "caps", Gst.Caps.from_string("audio/x-raw,rate=48000,channels=2")
     )
-    avenc_aac.set_property("bitrate", stream_config["audio_bitrate"],)
+
+    # Generate silent audio continuously, using the same rate and channels.
+    silence_source.set_property("is-live", True)
+    silence_source.set_property("wave", 4)  # Silence
+    silence_caps.set_property(
+        "caps", Gst.Caps.from_string("audio/x-raw,rate=48000,channels=2")
+    )
+
+    # Do not wait for an audio input that has never supplied buffers.
+    audio_mixer.set_property("ignore-inactive-pads", True)
+
+    avenc_aac.set_property("bitrate", stream_config["audio_bitrate"])
 
     mpegtsmux.set_property("alignment", 7)
     mpegtsmux.set_property("pat-interval", 9000)
@@ -580,12 +613,26 @@ def create_pipeline():
         (appsrc, jpegdec), (jpegdec, videoconvert),
         (videoconvert, videoscale), (videoscale, videocaps),
         (videocaps, x264enc), (x264enc, h264parse),
-        (h264parse, mpegtsmux),
+        (h264parse, video_mux_queue),
+        (video_mux_queue, mpegtsmux),
     ]
     audio_links = [
-        (audioconvert, audio_queue), (audio_queue, audioresample),
-        (audioresample, audiocaps), (audiocaps, avenc_aac),
-        (avenc_aac, aacparse), (aacparse, mpegtsmux),
+        # Live Icecast audio.
+        (audioconvert, audio_queue),
+        (audio_queue, audioresample),
+        (audioresample, audiocaps),
+        (audiocaps, audio_mixer),
+
+        # Continuous fallback silence.
+        (silence_source, silence_caps),
+        (silence_caps, silence_queue),
+        (silence_queue, audio_mixer),
+
+        # Mixed audio encoded into the transport stream.
+        (audio_mixer, avenc_aac),
+        (avenc_aac, aacparse),
+        (aacparse, audio_mux_queue),
+        (audio_mux_queue, mpegtsmux),
     ]
     for source_element, sink_element in video_links + audio_links:
         if not source_element.link(sink_element):
@@ -614,6 +661,28 @@ def on_audio_pad_added(decodebin, pad, audioconvert):
             logger.debug("Audio pad already linked")
             return
 
+        if audio_failed:
+            clock = pipeline.get_clock()
+
+            if clock is None:
+                logger.error(
+                    "Cannot align reconnected audio: pipeline has no clock"
+                )
+                return
+
+            running_time = max(
+                0,
+                clock.get_time() - pipeline.get_base_time(),
+            )
+
+            pad.set_offset(running_time)
+
+            logger.info(
+                "Aligning reconnected Icecast audio to "
+                "pipeline running time %.3fs",
+                running_time / Gst.SECOND,
+            )
+
         result = pad.link(sink_pad)
         if result != Gst.PadLinkReturn.OK:
             logger.error(f"Unable to link Icecast audio: {result}")
@@ -621,7 +690,10 @@ def on_audio_pad_added(decodebin, pad, audioconvert):
             logger.info("Icecast audio linked successfully.")
 
             if audio_failed:
-                logger.info("Icecast audio connection restored.")
+                logger.info(
+                    "Icecast audio source reconnected and linked. "
+                    "Waiting for audio playback to resume."
+                )
 
             audio_failed = False
             audio_reconnecting = False
