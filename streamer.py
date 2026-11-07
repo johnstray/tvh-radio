@@ -423,9 +423,10 @@ def run_image_worker(stop_event):
 
             if display_data is not None:
                 track_identity = get_track_identity(display_data)
+                is_fallback = result != "success"
 
                 if track_identity != previous_track:
-                    if metadata_state.fallback_active:
+                    if is_fallback:
                         logger.warning("Generating fallback image.")
                     else:
                         logger.info("Track metadata changed. Generating new image.")
@@ -447,6 +448,9 @@ def run_image_worker(stop_event):
                         f"Image generated and stored in memory. "
                         f"Size: {len(jpeg_data)} bytes"
                     )
+
+                if is_fallback:
+                    metadata_state.mark_fallback_active()
 
         except Exception as error:
             logger.error(f"Error generating image: {error}")

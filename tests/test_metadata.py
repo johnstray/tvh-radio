@@ -239,6 +239,11 @@ def test_fallback_state_empty_threshold():
 
     assert state.process("empty", None, fallback_data) == fallback_data
     assert state.empty_count == 3
+    assert state.fallback_active is False
+
+    # Simulate successful fallback image generation.
+    state.mark_fallback_active()
+
     assert state.fallback_active is True
 
     # Further empty responses should not trigger another fallback.
@@ -265,6 +270,12 @@ def test_fallback_state_api_error():
 
     assert result == fallback_data
     assert state.empty_count == 0
+    assert state.fallback_active is False
+    assert state.error_active is True
+
+    # Simulate successful fallback image generation.
+    state.mark_fallback_active()
+
     assert state.fallback_active is True
     assert state.error_active is True
 
@@ -294,6 +305,12 @@ def test_fallback_state_api_recovery():
         requests.ConnectionError("Connection refused"),
         fallback_data,
     )
+
+    assert state.fallback_active is False
+    assert state.error_active is True
+
+    # Simulate successful fallback image generation.
+    state.mark_fallback_active()
 
     assert state.fallback_active is True
     assert state.error_active is True
@@ -341,6 +358,22 @@ def test_fallback_state_repeated_errors():
 
     fallback_data = {"title": "Unknown Title"}
 
+    # First API error requests fallback.
+    result = state.process(
+        "error",
+        requests.ConnectionError("Connection refused"),
+        fallback_data,
+    )
+
+    assert result == fallback_data
+    assert state.empty_count == 0
+    assert state.fallback_active is False
+    assert state.error_active is True
+
+    # Simulate successful fallback image generation.
+    state.mark_fallback_active()
+
+    # Further API errors should preserve the active fallback state.
     for _ in range(3):
         result = state.process(
             "error",
@@ -368,6 +401,11 @@ def test_fallback_state_recovery_with_same_metadata():
 
     state.process("error", requests.ConnectionError(), fallback_data)
 
+    assert state.fallback_active is False
+
+    # Simulate successful fallback image generation.
+    state.mark_fallback_active()
+
     assert state.fallback_active is True
 
     # The API recovers but returns metadata identical to the fallback.
@@ -391,6 +429,11 @@ def test_fallback_state_error_followed_by_empty():
 
     state.process("error", requests.ConnectionError(), fallback_data)
 
+    assert state.fallback_active is False
+
+    # Simulate successful fallback image generation.
+    state.mark_fallback_active()
+
     assert state.fallback_active is True
 
     for _ in range(4):
@@ -399,3 +442,89 @@ def test_fallback_state_error_followed_by_empty():
         assert result is None
         assert state.fallback_active is True
         assert state.empty_count == 0
+
+
+def test_fallback_retries_after_failed_render():
+    """Fallback remains pending until image generation succeeds."""
+
+    state = MetadataFallbackState(empty_threshold=3)
+    fallback_data = {"title": "Unknown Title"}
+
+    assert state.process("empty", None, fallback_data) is None
+    assert state.process("empty", None, fallback_data) is None
+
+    # Third HTTP 204 requests fallback.
+    assert state.process("empty", None, fallback_data) == fallback_data
+
+    # Simulate a rendering failure by not acknowledging success.
+    assert state.fallback_active is False
+
+    # Another HTTP 204 must retry fallback.
+    assert state.process("empty", None, fallback_data) == fallback_data
+    assert state.empty_count == 3
+
+    # Simulate successful generation and storage.
+    state.mark_fallback_active()
+
+    assert state.fallback_active is True
+    assert state.process("empty", None, fallback_data) is None
+
+
+def test_fallback_retries_after_error_then_empty():
+    """An unrendered fallback remains pending after an API error."""
+
+    state = MetadataFallbackState(empty_threshold=3)
+    fallback_data = {"title": "Unknown Title"}
+
+    result = state.process(
+        "error",
+        requests.ConnectionError("Connection refused"),
+        fallback_data,
+    )
+
+    assert result == fallback_data
+    assert state.error_active is True
+    assert state.fallback_active is False
+
+    # Rendering failed; the next response is HTTP 204.
+    result = state.process("empty", None, fallback_data)
+
+    assert result == fallback_data
+    assert state.fallback_active is False
+    assert state.empty_count == 0
+
+    # Rendering now succeeds.
+    state.mark_fallback_active()
+
+    assert state.process("empty", None, fallback_data) is None
+    assert state.fallback_active is True
+
+
+def test_fallback_pending_cleared_on_api_recovery():
+    """API recovery clears an unacknowledged fallback request."""
+
+    state = MetadataFallbackState(empty_threshold=3)
+    fallback_data = {"title": "Unknown Title"}
+    track_data = {"title": "Test Song"}
+
+    state.process(
+        "error",
+        requests.ConnectionError("Connection refused"),
+        fallback_data,
+    )
+
+    # Fallback generation has not succeeded.
+    assert state.fallback_active is False
+    assert state.error_active is True
+
+    # The API recovers before the next fallback attempt.
+    result = state.process("success", track_data, fallback_data)
+
+    assert result == track_data
+    assert state.error_active is False
+    assert state.fallback_active is False
+    assert state.empty_count == 0
+
+    # A new sequence of empty responses starts normally.
+    assert state.process("empty", None, fallback_data) is None
+    assert state.empty_count == 1

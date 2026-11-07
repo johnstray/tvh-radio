@@ -69,12 +69,19 @@ class MetadataFallbackState:
             if self.fallback_active:
                 return None
 
-            self.empty_count += 1
+            # An earlier API error may have requested fallback,
+            # but image generation might not have succeeded yet.
+            if self.error_active:
+                return fallback_data
+
+            self.empty_count = min(
+                self.empty_count + 1,
+                self.empty_threshold,
+            )
 
             if fallback_threshold_reached(
                 self.empty_count, self.empty_threshold
             ):
-                self.fallback_active = True
                 return fallback_data
 
             return None
@@ -82,7 +89,11 @@ class MetadataFallbackState:
         if result == "error":
             self.empty_count = 0
             self.error_active = True
-            self.fallback_active = True
             return fallback_data
 
         raise ValueError(f"Unknown metadata result: {result}")
+
+
+    def mark_fallback_active(self):
+        """Confirm that the fallback image is available for display."""
+        self.fallback_active = True
