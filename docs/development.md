@@ -81,10 +81,10 @@ source .venv/bin/activate
 Install the Python dependencies:
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 ```
 
-The root requirements file contains the Python packages used by the application.
+The requirements-dev.txt file installs the application's Python dependencies along with pytest. Use requirements.txt instead when installing the application without the development tools. PyGObject and GStreamer remain system-provided dependencies.
 
 PyGObject is intentionally not installed from the root `requirements.txt`. The project expects the operating system's GObject Introspection/PyGObject and GStreamer packages to provide it.
 
@@ -230,7 +230,167 @@ In particular, changes involving GStreamer pipelines, network connections or wor
 
 Test both normal startup and normal shutdown after making changes to lifecycle-related code.
 
-## Testing changes
+## Automated testing
+
+`tvh-radio` uses [pytest](https://docs.pytest.org/) for automated tests. The test suite covers configuration validation, UDP allocation, playlist generation, metadata handling and master process management.
+
+Automated tests should be the first check after a code change. They provide fast feedback and do not require a running TVHeadend instance or access to live radio streams.
+
+### Installing test dependencies
+
+From the repository root, create and activate a development virtual environment if one is not already available:
+
+```bash
+python3 -m venv .venv --system-site-packages
+source .venv/bin/activate
+```
+
+Install the development dependencies:
+
+```bash
+python -m pip install -r requirements-dev.txt
+```
+
+The development requirements include pytest and the application's normal Python dependencies.
+
+The `--system-site-packages` option allows the virtual environment to access the system-installed PyGObject and GStreamer Python bindings where available.
+
+### Running the test suite
+
+Run all automated tests from the repository root:
+
+```bash
+python -m pytest -q
+```
+
+For more detailed output:
+
+```bash
+python -m pytest -v
+```
+
+Run an individual test module:
+
+```bash
+python -m pytest -q tests/test_process_management.py
+```
+
+Run a specific test:
+
+```bash
+python -m pytest -q tests/test_process_management.py::test_restart_loop_without_failures
+```
+
+During development, prefer running the relevant tests after each small change. Run the complete suite before committing significant changes.
+
+### Test organisation
+
+The tests are stored in the `tests/` directory.
+
+| Test module | Main coverage |
+|---|---|
+| `test_master_config.py` | Master configuration validation |
+| `test_channel_config.py` | Channel configuration validation |
+| `test_config_loading.py` | Configuration discovery and loading |
+| `test_udp.py` | UDP allocation and port handling |
+| `test_playlist.py` | Playlist generation and file management |
+| `test_metadata.py` | Metadata retrieval, mapping, fallback and recovery state |
+| `test_process_management.py` | Streamer startup, monitoring, restart policy, backoff and shutdown |
+| `conftest.py` | Shared pytest fixtures |
+
+The suite is intentionally structured around application responsibilities rather than individual implementation details.
+
+### Testing external dependencies
+
+Tests should not depend on live internet radio stations, metadata services, or real streamer subprocesses unless an integration test explicitly requires them.
+
+Use pytest fixtures and `monkeypatch` to simulate external behaviour. Examples include:
+
+- Mocking HTTP responses and network exceptions for metadata handling.
+- Replacing `time.monotonic()` to test restart and backoff boundaries without waiting.
+- Replacing `time.sleep()` to control the master monitoring loop.
+- Using fake subprocess objects to test process-management decisions without launching streamers.
+- Using temporary directories for configuration and playlist file operations.
+
+Tests involving time should be deterministic. Avoid real delays where a simulated clock can provide the same coverage.
+
+### Linting and syntax checks
+
+The project includes Ruff configuration in `pyproject.toml`.
+
+If Ruff is installed, run:
+
+```bash
+ruff check .
+```
+
+Python files can also be checked for syntax errors using:
+
+```bash
+python -m compileall -q master.py streamer.py metadata.py tests
+```
+
+Linting and compilation are additional checks; neither replaces the automated tests.
+
+### Manual and integration testing
+
+The automated test suite does not replace manual streaming checks.
+
+Changes involving GStreamer pipelines, audio-source recovery, video generation, MPEG-TS muxing or UDP delivery should be tested against a working channel configuration.
+
+Relevant checks include:
+
+- Confirming that the channel produces playable video and audio.
+- Verifying that metadata and artwork updates appear correctly.
+- Checking recovery following temporary service interruptions.
+- Confirming that the streamer and master shut down correctly.
+- Testing multiple simultaneous channels when changing master process management.
+- Confirming TVHeadend integration when applicable.
+
+Use the manual testing and regression-testing sections below for additional guidance.
+
+Live-service failures can be difficult to reproduce reliably. Where practical, use controlled test endpoints rather than deliberately disrupting production services.
+
+### Adding or modifying tests
+
+When introducing a feature or fixing a bug:
+
+1. Add or update tests covering the expected behaviour.
+2. Include important boundary conditions and failure scenarios.
+3. Mock external services and processes where practical.
+4. Run the affected test module.
+5. Run the complete test suite.
+6. Run linting checks where available.
+7. Perform manual integration testing if the change affects streaming or process lifecycle behaviour.
+
+Keep tests independent so that execution order does not affect their results.
+
+When fixing a regression, prefer a test that would fail against the original bug and pass with the corrected implementation.
+
+### Before committing
+
+The minimum automated checks for code changes are:
+
+```bash
+python -m pytest -q
+```
+
+Where Ruff is installed, also run:
+
+```bash
+ruff check .
+```
+
+Review the working tree before committing:
+
+```bash
+git status
+git diff
+```
+
+Automated tests establish confidence in the covered behaviour, but passing tests do not guarantee that live GStreamer pipelines or external services will work correctly.
+
+## Manual testing
 
 Testing should be performed incrementally.
 
@@ -287,7 +447,7 @@ A failure in one streamer should not unintentionally affect the other channels.
 
 ## Regression testing
 
-Before considering a significant change complete, test the areas affected by the change as well as the basic end-to-end path.
+Before considering a significant change complete, run the automated test suite and manually verify the affected functionality. Manual regression testing remains particularly important for live streaming, GStreamer pipeline behaviour and integration with external services.
 
 The core regression areas are:
 
@@ -487,6 +647,8 @@ Keep documentation focused on what an operator or developer actually needs to kn
 
 Before preparing a release:
 
+- Run the complete automated test suite.
+- Run Ruff lint checks.
 - Run configuration validation.
 - Perform a clean installation test.
 - Test multiple channels.

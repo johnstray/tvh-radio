@@ -279,7 +279,7 @@ def load_channel_configs(config_directory):
         try:
             config = load_channel_config(config_file)
             validate_channel_config(config)
-        except (OSError, json.JSONDecodeError, ValueError) as error:
+        except (OSError, json.JSONDecodeError, ValueError, TypeError) as error:
             raise ValueError(
                 f"{config_file}: {error}"
             ) from error
@@ -505,16 +505,17 @@ def start_channel(channel):
 
 
 def is_restart_loop(channel, restart_config):
-    """Return True if a channel is restarting too frequently."""
-    if channel["last_restart"] is None:
-        return False
+    """Return True if enough failures occurred within the rolling window."""
+    now = time.monotonic()
+    window = restart_config["window"]
 
-    elapsed = time.monotonic() - channel["last_restart"]
+    channel["failure_times"] = [
+        failure_time
+        for failure_time in channel["failure_times"]
+        if now - failure_time <= window
+    ]
 
-    return (
-        channel["restart_count"] >= restart_config["limit"]
-        and elapsed <= restart_config["window"]
-    )
+    return len(channel["failure_times"]) >= restart_config["limit"]
 
 
 def is_backoff_expired(channel):
@@ -530,7 +531,6 @@ def is_backoff_expired(channel):
 
 def restart_channel(channel):
     """Restart a channel process."""
-    channel["restart_count"] += 1
     channel["last_restart"] = time.monotonic()
 
     logger.warning(f"Restarting channel '{channel['channel_name']}'.")
@@ -557,10 +557,10 @@ def create_channel_state(config_file, config):
         "config_file": config_file,
         "process": None,
         "stopping": False,
-        "restart_count": 0,
+        "failure_times": [],
         "last_restart": None,
         "state": "running",
-        "next_restart": None
+        "next_restart": None,
     }
 
 
@@ -600,8 +600,7 @@ def monitor_channels(processes, restart_config):
                         "Attempting restart."
                     )
 
-                    channel["restart_count"] = 0
-                    channel["last_restart"] = None
+                    channel["failure_times"].clear()
                     channel["next_restart"] = None
 
                     restart_channel(channel)
@@ -610,19 +609,22 @@ def monitor_channels(processes, restart_config):
 
                 continue
 
+            exit_code = process.poll()
+
             if (
-                channel["last_restart"] is not None
+                exit_code is None
+                and channel["failure_times"]
+                and channel["last_restart"] is not None
                 and time.monotonic() - channel["last_restart"] >= restart_config["reset_time"]
             ):
                 logger.info(
-                    f"Channel '{channel['channel_name']}' has been healthy for "
-                    f"{restart_config["reset_time"]} seconds. Resetting restart history."
+                    f"Channel '{channel['channel_name']}' has been running for "
+                    f"{restart_config['reset_time']} seconds. "
+                    "Resetting failure history."
                 )
-                channel["restart_count"] = 0
-                channel["last_restart"] = None
+                channel["failure_times"].clear()
 
-            if process.poll() is not None:
-                exit_code = process.returncode
+            if exit_code is not None:
 
                 if channel["stopping"]:
                     logger.info(
@@ -640,6 +642,8 @@ def monitor_channels(processes, restart_config):
                 )
 
                 if exit_code != 0:
+                    channel["failure_times"].append(time.monotonic())
+
                     if is_restart_loop(channel, restart_config):
                         channel["state"] = "backoff"
                         channel["next_restart"] = (
